@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -488,6 +489,25 @@ func TestGoogleOAuthConfigCanBeSavedFromPlatformSites(t *testing.T) {
 	later := time.Now().Add(time.Hour)
 	if err := ps.CreateGoogleOAuthState("test-state", platform.GoogleServiceAll, later); err != nil {
 		t.Fatalf("create oauth state after config save: %v", err)
+	}
+}
+
+func TestGoogleAnalyticsHostnameFilter(t *testing.T) {
+	hostnames := normalizeGoogleAnalyticsHostnames("https://BlockVar.com/path")
+	if got := strings.Join(hostnames, ","); got != "blockvar.com,www.blockvar.com" {
+		t.Fatalf("hostnames = %q", got)
+	}
+	body := map[string]any{}
+	applyGoogleAnalyticsHostnameFilter(body, hostnames)
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{`"fieldName":"hostName"`, `"values":["blockvar.com","www.blockvar.com"]`, `"caseSensitive":false`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("filter body %s missing %s", got, want)
+		}
 	}
 }
 

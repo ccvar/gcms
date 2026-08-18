@@ -23,6 +23,7 @@ type discoveryStatsRefreshReport struct {
 
 type discoveryGoogleSummaryJob struct {
 	integration platform.SiteGoogleIntegration
+	hostnames   []string
 	token       string
 	tokenErr    error
 }
@@ -42,7 +43,7 @@ type discoveryGoogleTokenResult struct {
 
 // 独立变量让发现接口的刷新路径可在测试中替换为确定性数据，而不访问 Google。
 var (
-	discoveryGoogleAnalyticsSummaryFetch = googleAnalyticsSummary
+	discoveryGoogleAnalyticsSummaryFetch = googleAnalyticsSummaryForHosts
 	discoveryGoogleSearchSummaryFetch    = googleSearchConsoleSummary
 )
 
@@ -70,7 +71,11 @@ func (s *Server) refreshDiscoveryGoogleSummaries(ctx context.Context, r *http.Re
 			if integration == nil || !integration.Enabled {
 				continue
 			}
-			jobs = append(jobs, discoveryGoogleSummaryJob{integration: *integration})
+			job := discoveryGoogleSummaryJob{integration: *integration}
+			if service == platform.GoogleServiceAnalytics {
+				job.hostnames = s.googleAnalyticsHostnamesForSite(siteID)
+			}
+			jobs = append(jobs, job)
 		}
 	}
 	if len(jobs) == 0 {
@@ -125,7 +130,7 @@ func (s *Server) refreshDiscoveryGoogleSummaries(ctx context.Context, r *http.Re
 						if strings.TrimSpace(in.Property) == "" || strings.TrimSpace(in.MeasurementID) == "" {
 							result.err = errors.New("Google Analytics 配置不完整")
 						} else {
-							metrics, fetchErr := discoveryGoogleAnalyticsSummaryFetch(ctx, job.token, in.Property, dataRange)
+							metrics, fetchErr := discoveryGoogleAnalyticsSummaryFetch(ctx, job.token, in.Property, dataRange, job.hostnames)
 							result.analytics, result.err = &metrics, fetchErr
 						}
 					case platform.GoogleServiceSearchConsole:

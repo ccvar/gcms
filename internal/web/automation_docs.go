@@ -464,21 +464,21 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		"/stats/traffic": map[string]any{
 			"get": map[string]any{
 				"summary":     "GA 流量汇总（stats:read）",
-				"description": "查询参数：days=7（钳制 1..90）、fresh=1（可选，绕过 1 小时缓存）。返回 {ok,days,property,active_users,sessions,engagement_rate,average_session_duration}。未接入 Google Analytics 时返回 400 analytics_not_connected。",
+				"description": "查询参数：days=7（钳制 1..90，统计截至昨天的完整自然日）、fresh=1（可选，绕过 1 小时缓存）。按当前站点正式域名过滤，返回 {ok,days,property,scope_host,active_users,sessions,engagement_rate,average_session_duration}。未接入 Google Analytics 时返回 400 analytics_not_connected。",
 				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
 			},
 		},
 		"/stats/pages": map[string]any{
 			"get": map[string]any{
 				"summary":     "GA 页面级流量（stats:read）",
-				"description": "查询参数：days=7（钳制 1..90）、limit=50（钳制 1..1000）、fresh=1（可选，绕过 1 小时缓存）。GA4 按 pagePath 维度返回 {ok,days,property,rows:[{path,active_users,sessions,engagement_rate,average_session_duration}]}（活跃用户降序）。未接入 Google Analytics 时返回 400 analytics_not_connected。典型用法：识别主要流量页面，并配合 /stats/search 定位要优化的旧文。",
+				"description": "查询参数：days=7（钳制 1..90，统计截至昨天的完整自然日）、limit=50（钳制 1..1000）、fresh=1（可选，绕过 1 小时缓存）。GA4 按当前站点正式域名过滤，再按 pagePath 维度返回 {ok,days,property,scope_host,rows:[{path,active_users,sessions,engagement_rate,average_session_duration}]}（活跃用户降序）。未接入 Google Analytics 时返回 400 analytics_not_connected。典型用法：识别主要流量页面，并配合 /stats/search 定位要优化的旧文。",
 				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
 			},
 		},
 		"/stats/analytics": map[string]any{
 			"get": map[string]any{
 				"summary":     "GA 来源、地区、设备与趋势（stats:read）",
-				"description": "查询参数：group=sources|geography|devices|trend（默认 sources）、days=7（钳制 1..90）、limit=50（钳制 1..1000）、fresh=1（可选）。返回 dimensions 及 rows；每行包含与 dimensions 同序的 values，以及 active_users、sessions、engagement_rate、average_session_duration。sources=渠道+来源/媒介，geography=国家+地区，devices=设备类型+系统+浏览器，trend=日期升序。结果按端点参数缓存 1 小时。",
+				"description": "查询参数：group=sources|geography|devices|trend（默认 sources）、days=7（钳制 1..90，统计截至昨天的完整自然日）、limit=50（钳制 1..1000）、fresh=1（可选）。按当前站点正式域名过滤，返回 scope_host、dimensions 及 rows；每行包含与 dimensions 同序的 values，以及 active_users、sessions、engagement_rate、average_session_duration。sources=渠道+来源/媒介，geography=国家+地区，devices=设备类型+系统+浏览器，trend=日期升序。结果按端点参数缓存 1 小时。",
 				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
 			},
 		},

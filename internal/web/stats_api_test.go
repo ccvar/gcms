@@ -31,6 +31,9 @@ func newTestStatsServer(t *testing.T, scopes string, bind bool) (*Server, string
 		t.Fatalf("create platform site: %v", err)
 	}
 	s.platformSiteID = site.ID
+	if err := ps.AddSiteDomain(site.ID, "https", "example.com", true, false); err != nil {
+		t.Fatalf("add site domain: %v", err)
+	}
 	if !bind {
 		return s, token
 	}
@@ -107,6 +110,14 @@ func TestStatsScopeIssuable(t *testing.T) {
 	}
 }
 
+func TestGoogleAnalyticsRelativeStartDateUsesExactDayCount(t *testing.T) {
+	for days, want := range map[int]string{1: "1daysAgo", 7: "7daysAgo", 30: "30daysAgo"} {
+		if got := googleAnalyticsRelativeStartDate(days); got != want {
+			t.Fatalf("days=%d startDate=%q, want %q", days, got, want)
+		}
+	}
+}
+
 func TestStatsEndpointsRequireScope(t *testing.T) {
 	s, token := newTestStatsServer(t, "posts:read,posts:write", true)
 	for _, path := range []string{"/api/admin/v1/stats/search", "/api/admin/v1/stats/traffic", "/api/admin/v1/stats/pages", "/api/admin/v1/stats/analytics?group=sources"} {
@@ -134,11 +145,15 @@ func TestStatsAnalyticsDimensions(t *testing.T) {
 	statsAnalyticsFetch = func(
 		ctx context.Context,
 		accessToken, property string,
+		hostnames []string,
 		spec statsAnalyticsSpec,
 		days, limit int,
 	) (statsAnalyticsReport, error) {
 		calls++
 		gotSpec, gotDays, gotLimit = spec, days, limit
+		if strings.Join(hostnames, ",") != "example.com,www.example.com" {
+			t.Fatalf("analytics hostnames = %v", hostnames)
+		}
 		return statsAnalyticsReport{
 			Dimensions: append([]string(nil), spec.Dimensions...),
 			Rows: []statsAnalyticsRow{{
@@ -232,9 +247,12 @@ func TestStatsTrafficCacheAndDefaults(t *testing.T) {
 	calls := 0
 	var gotDays int
 	orig := statsTrafficFetch
-	statsTrafficFetch = func(ctx context.Context, accessToken, property string, days int) (statsTrafficSummary, error) {
+	statsTrafficFetch = func(ctx context.Context, accessToken, property string, hostnames []string, days int) (statsTrafficSummary, error) {
 		calls++
 		gotDays = days
+		if strings.Join(hostnames, ",") != "example.com,www.example.com" {
+			t.Fatalf("traffic hostnames = %v", hostnames)
+		}
 		return statsTrafficSummary{ActiveUsers: 88, Sessions: 120}, nil
 	}
 	t.Cleanup(func() { statsTrafficFetch = orig })
@@ -387,9 +405,12 @@ func TestStatsPages(t *testing.T) {
 	calls := 0
 	var gotDays, gotLimit int
 	orig := statsPagesFetch
-	statsPagesFetch = func(ctx context.Context, accessToken, property string, days, limit int) ([]statsPageRow, error) {
+	statsPagesFetch = func(ctx context.Context, accessToken, property string, hostnames []string, days, limit int) ([]statsPageRow, error) {
 		calls++
 		gotDays, gotLimit = days, limit
+		if strings.Join(hostnames, ",") != "example.com,www.example.com" {
+			t.Fatalf("pages hostnames = %v", hostnames)
+		}
 		return []statsPageRow{{Path: "/zh/posts/guide/", ActiveUsers: 66, Sessions: 80}}, nil
 	}
 	t.Cleanup(func() { statsPagesFetch = orig })

@@ -624,7 +624,8 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 	dataRange := s.googleDataRange()
 	accessToken, err := s.googleAccessToken(r.Context(), r, acc)
 	if err == nil {
-		metrics, runErr := googleAnalyticsSummary(r.Context(), accessToken, in.Property, dataRange)
+		hostnames := s.googleAnalyticsHostnamesForSite(siteID)
+		metrics, runErr := googleAnalyticsSummaryForHosts(r.Context(), accessToken, in.Property, dataRange, hostnames)
 		if runErr == nil {
 			sum := &platform.SiteGoogleAnalyticsSummary{
 				SiteID:        siteID,
@@ -651,6 +652,7 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 				"sessions":        sum.Sessions,
 				"range_label":     dataRange.Label,
 				"range_key":       sum.RangeKey,
+				"scope_host":      firstGoogleAnalyticsHostname(hostnames),
 				"fetched_at":      sum.FetchedAt.Format(time.RFC3339),
 			})
 			return
@@ -681,6 +683,13 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 		"range_label":   dataRange.Label,
 		"fetched_at":    sum.FetchedAt.Format(time.RFC3339),
 	})
+}
+
+func firstGoogleAnalyticsHostname(hostnames []string) string {
+	if len(hostnames) == 0 {
+		return ""
+	}
+	return hostnames[0]
 }
 
 func (s *Server) adminGoogleSearchConsoleSummary(w http.ResponseWriter, r *http.Request) {
@@ -1786,6 +1795,10 @@ func googleAnalyticsProperties(ctx context.Context, accessToken string) ([]googl
 }
 
 func googleAnalyticsSummary(ctx context.Context, accessToken, property string, dataRange googleDataRange) (googleAnalyticsSummaryMetrics, error) {
+	return googleAnalyticsSummaryForHosts(ctx, accessToken, property, dataRange, nil)
+}
+
+func googleAnalyticsSummaryForHosts(ctx context.Context, accessToken, property string, dataRange googleDataRange, hostnames []string) (googleAnalyticsSummaryMetrics, error) {
 	property = normalizeGoogleAnalyticsPropertyName(property)
 	if !validGoogleAnalyticsPropertyName(property) {
 		return googleAnalyticsSummaryMetrics{}, errors.New("GA4 属性无效，无法读取统计数据")
@@ -1795,6 +1808,7 @@ func googleAnalyticsSummary(ctx context.Context, accessToken, property string, d
 		"dateRanges": []map[string]string{{"startDate": startDate, "endDate": endDate}},
 		"metrics":    []map[string]string{{"name": "activeUsers"}, {"name": "sessions"}},
 	}
+	applyGoogleAnalyticsHostnameFilter(body, hostnames)
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return googleAnalyticsSummaryMetrics{}, err
@@ -1836,6 +1850,73 @@ func googleAnalyticsSummary(ctx context.Context, accessToken, property string, d
 		ActiveUsers7D: googleAnalyticsMetricInt(out.Rows[0].MetricValues, 0),
 		Sessions7D:    googleAnalyticsMetricInt(out.Rows[0].MetricValues, 1),
 	}, nil
+}
+
+func normalizeGoogleAnalyticsHostnames(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil
+	}
+	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(u.Hostname()), "."))
+	if host == "" {
+		return nil
+	}
+	values := []string{host}
+	if strings.HasPrefix(host, "www.") {
+		if bare := strings.TrimPrefix(host, "www."); bare != "" {
+			values = append(values, bare)
+		}
+	} else {
+		values = append(values, "www."+host)
+	}
+	return values
+}
+
+func applyGoogleAnalyticsHostnameFilter(body map[string]any, hostnames []string) {
+	seen := map[string]bool{}
+	values := make([]string, 0, len(hostnames))
+	for _, hostname := range hostnames {
+		hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
+		if hostname == "" || seen[hostname] {
+			continue
+		}
+		seen[hostname] = true
+		values = append(values, hostname)
+	}
+	if len(values) == 0 {
+		return
+	}
+	body["dimensionFilter"] = map[string]any{
+		"filter": map[string]any{
+			"fieldName": "hostName",
+			"inListFilter": map[string]any{
+				"values":        values,
+				"caseSensitive": false,
+			},
+		},
+	}
+}
+
+func (s *Server) googleAnalyticsHostnamesForSite(siteID int64) []string {
+	if s == nil || s.platform == nil || siteID <= 0 {
+		return nil
+	}
+	site, ok, err := s.platform.GetSite(siteID)
+	if err != nil || !ok || site == nil {
+		return nil
+	}
+	domains, err := s.platform.SiteDomains()
+	if err != nil {
+		return nil
+	}
+	return normalizeGoogleAnalyticsHostnames(s.discoverySiteURL(site, domains))
 }
 
 func googleAnalyticsSevenDaySummary(ctx context.Context, accessToken, property string) (googleAnalyticsSummaryMetrics, error) {
@@ -2499,7 +2580,7 @@ func googleSearchConsoleSevenDaySummary(ctx context.Context, accessToken, siteUR
 	return googleSearchConsoleSummary(ctx, accessToken, siteURL, googleDataRange{Mode: "days", Days: 7})
 }
 
-func googleDataRangeDates(dataRange googleDataRange, searchConsole bool) (string, string) {
+func googleDataRangeDates(dataRange googleDataRange, _ bool) (string, string) {
 	if dataRange.Mode == "custom" && dataRange.From != "" && dataRange.To != "" {
 		return dataRange.From, dataRange.To
 	}
@@ -2507,10 +2588,9 @@ func googleDataRangeDates(dataRange googleDataRange, searchConsole bool) (string
 	if days != 15 && days != 30 {
 		days = 7
 	}
-	end := time.Now()
-	if searchConsole {
-		end = end.AddDate(0, 0, -1)
-	}
+	// Google 官方报表默认展示截至昨天的完整自然日。摘要与详细统计保持
+	// 同一口径，避免把今天尚未收齐的部分数据拿来与官方页面比较。
+	end := time.Now().AddDate(0, 0, -1)
 	start := end.AddDate(0, 0, -(days - 1))
 	return start.Format("2006-01-02"), end.Format("2006-01-02")
 }

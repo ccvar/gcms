@@ -695,7 +695,7 @@ func TestPlatformKeyDiscoveryRefreshesGoogleSummariesForCurrentRange(t *testing.
 	})
 	analyticsRange := make(chan string, 1)
 	searchRange := make(chan string, 1)
-	discoveryGoogleAnalyticsSummaryFetch = func(_ context.Context, token, property string, dataRange googleDataRange) (googleAnalyticsSummaryMetrics, error) {
+	discoveryGoogleAnalyticsSummaryFetch = func(_ context.Context, token, property string, dataRange googleDataRange, hostnames []string) (googleAnalyticsSummaryMetrics, error) {
 		if token != "current-access-token" || property != "properties/300" {
 			return googleAnalyticsSummaryMetrics{}, errors.New("unexpected analytics request")
 		}

@@ -2881,7 +2881,7 @@ func (s *Server) discoverySiteItem(pool *SiteRuntimePool, site *platform.Site, d
 		"content_count":                 contentCount,
 		"pending_count":                 pendingCount,
 		"readiness":                     s.discoverySiteReadiness(displayPool, site, publicURL),
-		"integrations":                  s.discoverySiteIntegrations(displayPool, site, integrationSnapshot),
+		"integrations":                  s.discoverySiteIntegrations(displayPool, site, publicURL, integrationSnapshot),
 		"deployment":                    s.discoverySiteDeployment(displayPool, site, publicURL),
 		"public_access":                 s.discoverySitePublicAccess(site.ID, domains),
 	}
@@ -2969,10 +2969,11 @@ func (s *Server) discoverySiteCounts(pool *SiteRuntimePool, site *platform.Site)
 // discoveryIntegrationSnapshot 把平台级 Google 接入与统计摘要一次性读入内存，避免发现
 // 站点时按卡片逐项查询。读取失败只降级为“未配置/暂无摘要”，不影响旧发现契约可用性。
 type discoveryIntegrationSnapshot struct {
-	google    map[int64]map[string]*platform.SiteGoogleIntegration
-	analytics map[int64]*platform.SiteGoogleAnalyticsSummary
-	search    map[int64]*platform.SiteGoogleSearchConsoleSummary
-	rangeKey  string
+	google     map[int64]map[string]*platform.SiteGoogleIntegration
+	analytics  map[int64]*platform.SiteGoogleAnalyticsSummary
+	search     map[int64]*platform.SiteGoogleSearchConsoleSummary
+	rangeKey   string
+	rangeLabel string
 }
 
 func (s *Server) discoveryIntegrationSnapshot() discoveryIntegrationSnapshot {
@@ -2993,7 +2994,9 @@ func (s *Server) discoveryIntegrationSnapshot() discoveryIntegrationSnapshot {
 	if values, err := s.platform.SiteGoogleSearchConsoleSummaries(); err == nil {
 		snapshot.search = values
 	}
-	snapshot.rangeKey = googleDataRangeKeyValue(s.googleDataRange())
+	dataRange := s.googleDataRange()
+	snapshot.rangeKey = googleDataRangeKeyValue(dataRange)
+	snapshot.rangeLabel = dataRange.Label
 	return snapshot
 }
 
@@ -3044,7 +3047,7 @@ func (s *Server) discoveryPlatformStatus(r *http.Request) map[string]any {
 
 // discoverySiteIntegrations 返回单站卡片需要的脱敏摘要。Google 仅给开关与缓存统计，
 // Telegram 仅给公开频道信息和共享 Bot 使用状态，不回传任何账号/Token 标识。
-func (s *Server) discoverySiteIntegrations(pool *SiteRuntimePool, site *platform.Site, snapshot discoveryIntegrationSnapshot) map[string]any {
+func (s *Server) discoverySiteIntegrations(pool *SiteRuntimePool, site *platform.Site, publicURL string, snapshot discoveryIntegrationSnapshot) map[string]any {
 	analytics := map[string]any{"configured": false, "enabled": false}
 	search := map[string]any{"configured": false, "enabled": false}
 	telegram := map[string]any{
@@ -3071,6 +3074,8 @@ func (s *Server) discoverySiteIntegrations(pool *SiteRuntimePool, site *platform
 		analytics["status"] = summary.Status
 		analytics["fetched_at"] = summary.FetchedAt
 		analytics["range_key"] = summary.RangeKey
+		analytics["range_label"] = snapshot.rangeLabel
+		analytics["scope_host"] = firstGoogleAnalyticsHostname(normalizeGoogleAnalyticsHostnames(publicURL))
 		if summary.RangeKey == snapshot.rangeKey && summary.Status == platform.GoogleAnalyticsSummaryStatusOK {
 			analytics["active_users"] = summary.ActiveUsers
 			analytics["sessions"] = summary.Sessions

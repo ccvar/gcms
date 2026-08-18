@@ -163,6 +163,13 @@ func statsClampLimit(raw string, def int) int {
 	return n
 }
 
+func googleAnalyticsRelativeStartDate(days int) string {
+	if days <= 1 {
+		return "1daysAgo"
+	}
+	return fmt.Sprintf("%ddaysAgo", days)
+}
+
 // statsAnalyticsGroupSpec 约束客户端可读取的 GA4 维度组合。
 // 只开放产品实际展示的组合，避免把任意维度/指标透传给 Google。
 func statsAnalyticsGroupSpec(raw string) (statsAnalyticsSpec, bool) {
@@ -395,7 +402,9 @@ func (s *Server) apiStatsTraffic(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, errCode, errMsg)
 		return
 	}
-	cacheKey := fmt.Sprintf("traffic|%s|%d", in.Property, days)
+	hostnames := s.googleAnalyticsHostnamesForSite(s.platformSiteID)
+	scopeHost := firstGoogleAnalyticsHostname(hostnames)
+	cacheKey := fmt.Sprintf("traffic|%s|%s|%d", in.Property, scopeHost, days)
 	if !fresh {
 		if payload, ok := s.statsCacheGet(cacheKey); ok {
 			writeJSON(w, http.StatusOK, payload)
@@ -407,7 +416,7 @@ func (s *Server) apiStatsTraffic(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadGateway, "google_auth_failed", err.Error())
 		return
 	}
-	sum, err := statsTrafficFetch(r.Context(), token, in.Property, days)
+	sum, err := statsTrafficFetch(r.Context(), token, in.Property, hostnames, days)
 	if err != nil {
 		apiError(w, http.StatusBadGateway, "google_api_error", err.Error())
 		return
@@ -416,6 +425,7 @@ func (s *Server) apiStatsTraffic(w http.ResponseWriter, r *http.Request) {
 		"ok":                       true,
 		"days":                     days,
 		"property":                 in.Property,
+		"scope_host":               scopeHost,
 		"active_users":             sum.ActiveUsers,
 		"sessions":                 sum.Sessions,
 		"engagement_rate":          sum.EngagementRate,
@@ -520,13 +530,13 @@ func googleSearchConsoleRowsRange(ctx context.Context, accessToken, siteURL stri
 
 // googleAnalyticsTrafficSummary GA4 runReport：days 参数化的流量与互动质量汇总
 // （googleAnalyticsSevenDaySummary 的一般化版本）。
-func googleAnalyticsTrafficSummary(ctx context.Context, accessToken, property string, days int) (statsTrafficSummary, error) {
+func googleAnalyticsTrafficSummary(ctx context.Context, accessToken, property string, hostnames []string, days int) (statsTrafficSummary, error) {
 	property = normalizeGoogleAnalyticsPropertyName(property)
 	if !validGoogleAnalyticsPropertyName(property) {
 		return statsTrafficSummary{}, errors.New("GA4 属性无效，无法读取统计数据")
 	}
 	body := map[string]any{
-		"dateRanges": []map[string]string{{"startDate": fmt.Sprintf("%ddaysAgo", days), "endDate": "today"}},
+		"dateRanges": []map[string]string{{"startDate": googleAnalyticsRelativeStartDate(days), "endDate": "yesterday"}},
 		"metrics": []map[string]string{
 			{"name": "activeUsers"},
 			{"name": "sessions"},
@@ -534,6 +544,7 @@ func googleAnalyticsTrafficSummary(ctx context.Context, accessToken, property st
 			{"name": "averageSessionDuration"},
 		},
 	}
+	applyGoogleAnalyticsHostnameFilter(body, hostnames)
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return statsTrafficSummary{}, err
@@ -593,7 +604,9 @@ func (s *Server) apiStatsPages(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, errCode, errMsg)
 		return
 	}
-	cacheKey := fmt.Sprintf("pages|%s|%d|%d", in.Property, days, limit)
+	hostnames := s.googleAnalyticsHostnamesForSite(s.platformSiteID)
+	scopeHost := firstGoogleAnalyticsHostname(hostnames)
+	cacheKey := fmt.Sprintf("pages|%s|%s|%d|%d", in.Property, scopeHost, days, limit)
 	if !fresh {
 		if payload, ok := s.statsCacheGet(cacheKey); ok {
 			writeJSON(w, http.StatusOK, payload)
@@ -605,7 +618,7 @@ func (s *Server) apiStatsPages(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadGateway, "google_auth_failed", err.Error())
 		return
 	}
-	rows, err := statsPagesFetch(r.Context(), token, in.Property, days, limit)
+	rows, err := statsPagesFetch(r.Context(), token, in.Property, hostnames, days, limit)
 	if err != nil {
 		apiError(w, http.StatusBadGateway, "google_api_error", err.Error())
 		return
@@ -613,20 +626,20 @@ func (s *Server) apiStatsPages(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []statsPageRow{}
 	}
-	payload := map[string]any{"ok": true, "days": days, "property": in.Property, "rows": rows}
+	payload := map[string]any{"ok": true, "days": days, "property": in.Property, "scope_host": scopeHost, "rows": rows}
 	s.statsCachePut(cacheKey, payload)
 	writeJSON(w, http.StatusOK, payload)
 }
 
 // googleAnalyticsPagesReport GA4 runReport：pagePath 维度 × 流量与互动质量，
 // 按活跃用户降序取前 limit 行。
-func googleAnalyticsPagesReport(ctx context.Context, accessToken, property string, days, limit int) ([]statsPageRow, error) {
+func googleAnalyticsPagesReport(ctx context.Context, accessToken, property string, hostnames []string, days, limit int) ([]statsPageRow, error) {
 	property = normalizeGoogleAnalyticsPropertyName(property)
 	if !validGoogleAnalyticsPropertyName(property) {
 		return nil, errors.New("GA4 属性无效，无法读取统计数据")
 	}
 	body := map[string]any{
-		"dateRanges": []map[string]string{{"startDate": fmt.Sprintf("%ddaysAgo", days), "endDate": "today"}},
+		"dateRanges": []map[string]string{{"startDate": googleAnalyticsRelativeStartDate(days), "endDate": "yesterday"}},
 		"dimensions": []map[string]string{{"name": "pagePath"}},
 		"metrics": []map[string]string{
 			{"name": "activeUsers"},
@@ -637,6 +650,7 @@ func googleAnalyticsPagesReport(ctx context.Context, accessToken, property strin
 		"orderBys": []map[string]any{{"desc": true, "metric": map[string]string{"metricName": "activeUsers"}}},
 		"limit":    limit,
 	}
+	applyGoogleAnalyticsHostnameFilter(body, hostnames)
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return nil, err
@@ -712,7 +726,9 @@ func (s *Server) apiStatsAnalytics(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, errCode, errMsg)
 		return
 	}
-	cacheKey := fmt.Sprintf("analytics|%s|%s|%d|%d", spec.Group, in.Property, days, limit)
+	hostnames := s.googleAnalyticsHostnamesForSite(s.platformSiteID)
+	scopeHost := firstGoogleAnalyticsHostname(hostnames)
+	cacheKey := fmt.Sprintf("analytics|%s|%s|%s|%d|%d", spec.Group, in.Property, scopeHost, days, limit)
 	if !fresh {
 		if payload, ok := s.statsCacheGet(cacheKey); ok {
 			writeJSON(w, http.StatusOK, payload)
@@ -724,7 +740,7 @@ func (s *Server) apiStatsAnalytics(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadGateway, "google_auth_failed", err.Error())
 		return
 	}
-	report, err := statsAnalyticsFetch(r.Context(), token, in.Property, spec, days, limit)
+	report, err := statsAnalyticsFetch(r.Context(), token, in.Property, hostnames, spec, days, limit)
 	if err != nil {
 		apiError(w, http.StatusBadGateway, "google_api_error", err.Error())
 		return
@@ -739,6 +755,7 @@ func (s *Server) apiStatsAnalytics(w http.ResponseWriter, r *http.Request) {
 		"ok":         true,
 		"days":       days,
 		"property":   in.Property,
+		"scope_host": scopeHost,
 		"group":      spec.Group,
 		"dimensions": report.Dimensions,
 		"rows":       report.Rows,
@@ -752,6 +769,7 @@ func (s *Server) apiStatsAnalytics(w http.ResponseWriter, r *http.Request) {
 func googleAnalyticsDimensionReport(
 	ctx context.Context,
 	accessToken, property string,
+	hostnames []string,
 	spec statsAnalyticsSpec,
 	days, limit int,
 ) (statsAnalyticsReport, error) {
@@ -764,7 +782,7 @@ func googleAnalyticsDimensionReport(
 		dimensions = append(dimensions, map[string]string{"name": name})
 	}
 	body := map[string]any{
-		"dateRanges": []map[string]string{{"startDate": fmt.Sprintf("%ddaysAgo", days), "endDate": "today"}},
+		"dateRanges": []map[string]string{{"startDate": googleAnalyticsRelativeStartDate(days), "endDate": "yesterday"}},
 		"dimensions": dimensions,
 		"metrics": []map[string]string{
 			{"name": "activeUsers"},
@@ -774,6 +792,7 @@ func googleAnalyticsDimensionReport(
 		},
 		"limit": limit,
 	}
+	applyGoogleAnalyticsHostnameFilter(body, hostnames)
 	if spec.Group == "trend" {
 		body["orderBys"] = []map[string]any{{
 			"dimension": map[string]string{"dimensionName": "date", "orderType": "ALPHANUMERIC"},
