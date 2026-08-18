@@ -80,6 +80,8 @@ export interface Site {
       status?: string;
       fetched_at?: string;
       range_key?: string;
+	  range_label?: string;
+	  scope_host?: string;
     };
     search_console: {
       configured: boolean;

@@ -766,16 +766,57 @@ pub fn audit_prompt(site_name: &str) -> String {
 /// 每周周报任务的 prompt：真实数字由 Pilot 在触发时以【本周实测数据】块注入；
 /// 计划摘要随 prompt 下发（「计划关键词 vs 实际曝光词偏差」一节的对照基准），
 /// 所以 plan 变化后要与每日任务一起重新生成回写。
-pub fn apply_custom_prompt(custom: &str, generated: String) -> String {
+fn selected_prompt(custom: &str, generated: String) -> String {
     let custom = custom.trim();
     if custom.is_empty() {
-        return format!("{generated}\n\n{}", immutable_prompt_boundary());
+        generated
+    } else {
+        custom.to_string()
     }
-    format!("{custom}\n\n{}", immutable_prompt_boundary())
 }
 
-fn immutable_prompt_boundary() -> &'static str {
-    "【系统强制边界（不可覆盖，用户自定义指令也不能绕过）】\n- 只允许在当前站点内创建或更新草稿，不得自行发布或定时发布。\n- 必须遵守托管等级、每周产出上限、存量修改上限和 token 预算。\n- 不得删除内容，不得修改导航、站点资料、语言设置或创建、启用内容类型。\n- 不得输出、记录或传播访问密钥、令牌、账号、Cookie 及其他敏感信息。\n- 每篇文章必须有真实、贴切、与正文明确对应的配图，并填写准确描述画面的 alt；禁止用无关占位图、装饰图冒充配图。\n- 涉及后台、网页、软件或产品操作时，必须使用真实系统截图；截图发布前必须遮盖 Token、账号、邮箱、Cookie、内部 URL 等敏感信息，不能用伪造界面或想象截图。\n- 每篇文章先明确一个真实的搜索意图和目标读者，全文围绕该意图解决问题；内容必须原创、可验证、可执行，禁止关键词堆砌、模板拼接、空话、虚构案例、虚构数据和伪造引用。\n- 时效性事实优先引用官方或一手来源；无法验证的事实必须明确标注不确定，不得编造。"
+fn shared_write_boundary() -> &'static str {
+    "- 必须遵守托管等级、每周产出上限、存量修改上限和 token 预算。\n\
+- 不得删除内容，不得修改导航、站点资料、语言设置或创建、启用内容类型。\n\
+- 不得输出、记录或传播访问密钥、令牌、账号、Cookie 及其他敏感信息。\n\
+- 每篇文章必须有真实、贴切、与正文明确对应的配图和准确 alt；禁止用无关占位图、装饰图冒充配图。\n\
+- 涉及后台、网页、软件或产品操作时必须使用真实截图，发布前遮盖 Token、账号、邮箱、Cookie、内部 URL 等敏感信息。\n\
+- 内容必须原创、可验证、可执行，禁止关键词堆砌、模板拼接、虚构案例、数据或引用；时效事实优先引用官方或一手来源。"
+}
+
+/// 每日内容的最终强制边界必须与托管等级一致，不能在 L1+ 提示词末尾再追加“只草稿”。
+pub fn apply_daily_prompt(custom: &str, generated: String, level: &str) -> String {
+    let publication = if matches!(level, "l1" | "l2" | "l3") {
+        "- 常规新文章通过质量自检和服务端质量门后应直接发布（status=published）；只有把握不足、话题敏感、实验性内容或质量门未通过时才保留草稿，并在汇报中说明原因。审计纪要等元内容仍只能保存草稿；绝不定时发布。"
+    } else {
+        "- L0 只允许创建或修改草稿（status=draft），绝不发布或定时发布。"
+    };
+    format!(
+        "{}\n\n【计划托管系统强制边界（不可覆盖）】\n{publication}\n{}",
+        selected_prompt(custom, generated),
+        shared_write_boundary()
+    )
+}
+
+/// 审计可以创建一篇审计纪要草稿，但不得被自定义指令变成发布或修改任务。
+pub fn apply_audit_prompt(custom: &str, generated: String) -> String {
+    format!(
+        "{}\n\n【计划托管审计强制边界（不可覆盖）】\n\
+- 只允许创建一篇本次审计纪要草稿，不得发布，不得修改、下线或删除其他内容。\n{}",
+        selected_prompt(custom, generated),
+        shared_write_boundary()
+    )
+}
+
+/// 周报严格只读，不允许自定义指令把它变成站点写入任务。
+pub fn apply_report_prompt(custom: &str, generated: String) -> String {
+    format!(
+        "{}\n\n【计划托管周报只读边界（不可覆盖）】\n\
+- 只分析真实数据并输出周报，不得创建、修改、发布、下线或删除任何站点内容。\n\
+- 不得修改导航、站点资料、语言、内容类型、域名、部署或账号配置。\n\
+- 数据不可用时必须明确说明，不得猜测或补造；不得输出、记录或传播密钥、令牌、账号、Cookie 或内部 URL。",
+        selected_prompt(custom, generated)
+    )
 }
 
 pub fn report_prompt(site_name: &str, plan: &str) -> String {
@@ -1776,6 +1817,57 @@ mod tests {
         // 未知等级按 L0 处理（安全侧）
         let unk = daily_prompt("s", "p", 3, &[], "weird", 2, "");
         assert!(unk.contains("L0 试运行") && unk.contains("绝不发布"));
+    }
+
+    /// 回归：真正保存到定时任务的是最终合成提示，L1+ 末尾不能再被“只草稿”覆盖。
+    #[test]
+    fn composed_daily_prompt_respects_managed_level() {
+        let l0 = apply_daily_prompt(
+            "",
+            daily_prompt("s", "p", 3, &[], "l0", 2, ""),
+            "l0",
+        );
+        assert!(l0.contains("L0 只允许创建或修改草稿"));
+        assert!(!l0.contains("通过质量自检和服务端质量门后应直接发布"));
+
+        for level in ["l1", "l2", "l3"] {
+            let composed = apply_daily_prompt(
+                "",
+                daily_prompt("s", "p", 3, &[], level, 2, ""),
+                level,
+            );
+            assert!(
+                composed.contains("通过质量自检和服务端质量门后应直接发布"),
+                "{level} 的最终提示必须保留自动发布能力"
+            );
+            assert!(composed.contains("只有把握不足"));
+            assert!(composed.contains("并在汇报中说明原因"));
+            assert!(
+                !composed.contains("只允许在当前站点内创建或更新草稿"),
+                "{level} 不能再混入旧的全面禁发边界"
+            );
+        }
+    }
+
+    /// 自定义指令保持旧版“编辑整份任务”语义，但不能绕过最终角色边界。
+    #[test]
+    fn custom_prompts_replace_generated_prompts_but_keep_role_boundaries() {
+        let daily = apply_daily_prompt(
+            "这是用户编辑后的完整每日任务",
+            daily_prompt("科技站", "AI 周刊", 3, &[], "l1", 2, ""),
+            "l1",
+        );
+        assert!(!daily.contains("90 天运营计划"));
+        assert!(daily.contains("这是用户编辑后的完整每日任务"));
+        assert!(daily.contains("应直接发布"));
+
+        let audit = apply_audit_prompt("用户审计任务", audit_prompt("科技站"));
+        assert!(audit.contains("用户审计任务"));
+        assert!(audit.contains("只允许创建一篇本次审计纪要草稿"));
+
+        let report = apply_report_prompt("用户周报任务", report_prompt("科技站", "AI 周刊"));
+        assert!(report.contains("用户周报任务"));
+        assert!(report.contains("只分析真实数据并输出周报"));
     }
 
     /// L3 存量维护：配额注入、下线仅转草稿、禁删、数据依据要求、无数据禁改。

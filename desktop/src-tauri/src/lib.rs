@@ -2639,6 +2639,24 @@ mod workdir_tests {
             daily.prompt.contains("可以直接发布"),
             "L1 的每日 prompt 放开常规发布"
         );
+        assert!(daily.prompt.contains("应直接发布"));
+        assert!(
+            !daily
+                .prompt
+                .contains("只允许在当前站点内创建或更新草稿"),
+            "L1 最终提示不能被旧的全面禁发边界覆盖"
+        );
+
+        // 升级启动时会重建已有托管任务，旧版错误提示不要求用户重新切等级。
+        tstore
+            .mutate(&m.task_ids[0], |task| {
+                task.prompt = "旧版提示：只允许草稿".into()
+            })
+            .unwrap();
+        reconcile_managed_prompts(&tstore, &mstore);
+        let repaired = tstore.get(&m.task_ids[0]).expect("升级后每日任务");
+        assert!(repaired.prompt.contains("应直接发布"));
+        assert!(!repaired.prompt.contains("旧版提示"));
 
         let audit = tstore.get(&m.task_ids[1]).expect("审计任务");
         assert!(audit.title.starts_with("托管 · 每周审计"));
@@ -4927,6 +4945,19 @@ fn notify_user(app: &AppHandle, title: &str, body: String) {
 /// 审计要点任一变化后调用，否则任务还带着旧边界跑。审计任务 prompt 是静态的，不用同步。
 /// 后台任务（fire_task）没有 AppState，签名收 TaskStore。
 fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
+    fn write_if_changed(tasks: &tasks::TaskStore, task_id: &str, prompt: String) {
+        if tasks
+            .get(task_id)
+            .is_some_and(|current| current.prompt == prompt)
+        {
+            return;
+        }
+        let _ = tasks.mutate(task_id, |task| {
+            task.prompt = prompt.clone();
+            task.updated_at = now_secs();
+        });
+    }
+
     let growth_positioning = m.growth.as_ref().map(|growth| &growth.config.positioning);
     if let Some(tid) = m.task_ids.first() {
         let generated = if m.mode.is_growth() {
@@ -4948,12 +4979,9 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
         let p = if m.mode.is_growth() {
             managed_growth_service::apply_daily_prompt(&m.custom_daily_prompt, generated, &m.level)
         } else {
-            managed::apply_custom_prompt(&m.custom_daily_prompt, generated)
+            managed::apply_daily_prompt(&m.custom_daily_prompt, generated, &m.level)
         };
-        let _ = tasks.mutate(tid, |t| {
-            t.prompt = p.clone();
-            t.updated_at = now_secs();
-        });
+        write_if_changed(tasks, tid, p);
     }
     if let Some(tid) = m.task_ids.get(1) {
         let generated = if m.mode.is_growth() {
@@ -4967,12 +4995,9 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
         let p = if m.mode.is_growth() {
             managed_growth_service::apply_readonly_prompt(&m.custom_audit_prompt, generated)
         } else {
-            managed::apply_custom_prompt(&m.custom_audit_prompt, generated)
+            managed::apply_audit_prompt(&m.custom_audit_prompt, generated)
         };
-        let _ = tasks.mutate(tid, |t| {
-            t.prompt = p.clone();
-            t.updated_at = now_secs();
-        });
+        write_if_changed(tasks, tid, p);
     }
     // 周报 prompt 带计划摘要（「计划关键词 vs 实际曝光词偏差」的对照基准），计划变了要跟着换。
     if let Some(tid) = m.task_ids.get(2) {
@@ -4987,12 +5012,17 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
         let p = if m.mode.is_growth() {
             managed_growth_service::apply_readonly_prompt(&m.custom_report_prompt, generated)
         } else {
-            managed::apply_custom_prompt(&m.custom_report_prompt, generated)
+            managed::apply_report_prompt(&m.custom_report_prompt, generated)
         };
-        let _ = tasks.mutate(tid, |t| {
-            t.prompt = p.clone();
-            t.updated_at = now_secs();
-        });
+        write_if_changed(tasks, tid, p);
+    }
+}
+
+/// 版本升级后修复已有托管任务的最终提示词。只在内容确实变化时写盘，
+/// 因此不会扰动 next_run、历史记录或已有会话。
+fn reconcile_managed_prompts(tasks: &tasks::TaskStore, managed: &managed::ManagedStore) {
+    for item in managed.list() {
+        sync_daily_prompt(tasks, &item);
     }
 }
 
@@ -5252,9 +5282,10 @@ fn enable_managed(
         fallback_model.clone(),
         fallback_effort.clone(),
         format!("托管 · 每日内容 · {site_name}"),
-        managed::apply_custom_prompt(
+        managed::apply_daily_prompt(
             &custom_daily_prompt,
             managed::daily_prompt(&site_name, &plan, limit, &[], &level, edit_limit, ""),
+            &level,
         ),
         1440,
         0,
@@ -5276,7 +5307,7 @@ fn enable_managed(
         fallback_model.clone(),
         fallback_effort.clone(),
         format!("托管 · 每周审计 · {site_name}"),
-        managed::apply_custom_prompt(&custom_audit_prompt, managed::audit_prompt(&site_name)),
+        managed::apply_audit_prompt(&custom_audit_prompt, managed::audit_prompt(&site_name)),
         10080,
         0,
         true,
@@ -5297,7 +5328,7 @@ fn enable_managed(
         fallback_model.clone(),
         fallback_effort.clone(),
         format!("托管 · 每周周报 · {site_name}"),
-        managed::apply_custom_prompt(
+        managed::apply_report_prompt(
             &custom_report_prompt,
             managed::report_prompt(&site_name, &plan),
         ),
@@ -8355,11 +8386,13 @@ pub fn run() {
             let _ = tools::ensure_design_plugin(&data_dir); // 随附建站设计技能（claude/grok 走 --plugin-dir）
             let _ = cf_templates::ensure_builtin(&data_dir); // 随附起始模板，覆写以随版本刷新
             let task_store = tasks::TaskStore::new(&data_dir);
+            let managed_store = managed::ManagedStore::new(&data_dir);
+            reconcile_managed_prompts(&task_store, &managed_store);
             app.manage(AppState {
                 conns,
                 convos,
                 tasks: task_store,
-                managed: managed::ManagedStore::new(&data_dir),
+                managed: managed_store,
                 runs: agent::RunRegistry::default(),
                 firing: Arc::new(Mutex::new(HashSet::new())),
                 gcms_installing: Arc::new(Mutex::new(HashSet::new())),

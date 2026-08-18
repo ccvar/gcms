@@ -170,6 +170,7 @@
     ok: boolean;
     days: number;
     property: string;
+	  scope_host?: string;
     active_users: number;
     sessions: number;
     engagement_rate?: number;
@@ -186,6 +187,7 @@
     ok: boolean;
     days: number;
     property: string;
+	  scope_host?: string;
     rows: GaPageRow[];
   };
   type GaDimensionRow = {
@@ -199,6 +201,7 @@
     ok: boolean;
     days: number;
     property: string;
+	  scope_host?: string;
     group: GaDimensionGroup;
     dimensions: string[];
     rows: GaDimensionRow[];
@@ -10208,6 +10211,24 @@
     const rangeKey = site.integrations?.analytics?.range_key?.trim() ?? '';
     return ['7', '15', '28', '30', '90'].includes(rangeKey) ? rangeKey : '30';
   }
+  function gaSummaryRangeLabel(site: Site): string {
+    const analytics = site.integrations?.analytics;
+    if (analytics?.range_label?.trim()) return analytics.range_label.trim();
+    const key = analytics?.range_key?.trim() ?? '';
+    if (/^\d+$/.test(key)) return `近 ${key} 天`;
+    if (key.startsWith('custom:')) {
+      const [, from, to] = key.split(':');
+      if (from && to) return `${from} 至 ${to}`;
+    }
+    return '当前数据范围';
+  }
+  function gaSummaryUpdatedLabel(site: Site): string {
+    const raw = site.integrations?.analytics?.fetched_at?.trim();
+    if (!raw) return '尚未刷新';
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return '尚未刷新';
+    return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);
+  }
   function gaSummaryTraffic(): GaTrafficPayload | null {
     const summary = gaInsightsSite?.integrations?.analytics;
     if (!summary || (summary.active_users == null && summary.sessions == null)) return null;
@@ -12340,7 +12361,7 @@
                     </div>
                     <div class="site-dashboard-status">
                       <div class="site-dashboard-integrations" aria-label="站点接入状态">
-                        <button type="button" class="site-integration" class:configured={ga?.configured} class:attention={ga?.configured && !ga.enabled} data-tip={ga?.configured ? (ga.enabled ? `Google Analytics 已启用 · ${ga.active_users ?? 0} 活跃 · ${ga.sessions ?? 0} 访问` : 'Google Analytics 已配置，但接入尚未完成') : 'Google Analytics 未配置'} onclick={() => void openSiteIntegrationEditor(site, 'analytics')}>
+                        <button type="button" class="site-integration" class:configured={ga?.configured} class:attention={ga?.configured && !ga.enabled} data-tip={ga?.configured ? (ga.enabled ? `Google Analytics 已启用 · ${gaSummaryRangeLabel(site)} · ${ga.active_users ?? 0} 位活跃用户 · ${ga.sessions ?? 0} 次会话 · 更新于 ${gaSummaryUpdatedLabel(site)}` : 'Google Analytics 已配置，但接入尚未完成') : 'Google Analytics 未配置'} onclick={() => void openSiteIntegrationEditor(site, 'analytics')}>
                           {@render googleAnalyticsIcon(14)}
                         </button>
                         <button type="button" class="site-integration" class:configured={gsc?.configured} class:attention={gsc?.configured && !gsc.enabled} data-tip={gsc?.configured ? (gsc.enabled ? `Google Search Console 已启用 · ${gsc.clicks ?? 0} 点击 · ${gsc.impressions ?? 0} 曝光` : 'Google Search Console 已添加属性，等待完成所有权验证') : 'Google Search Console 未配置'} onclick={() => void openSiteIntegrationEditor(site, 'search_console')}>
@@ -12381,7 +12402,7 @@
                                 {#if ga.status === 'error'}
                                   <b>GA：</b>数据暂不可用
                                 {:else if ga.active_users != null || ga.sessions != null}
-                                  <b>GA：</b>活跃 {ga.active_users ?? 0} · 访问 {ga.sessions ?? 0}
+                                  <b>GA：</b>{gaSummaryRangeLabel(site)} · {ga.active_users ?? 0} 用户 · {ga.sessions ?? 0} 会话
                                 {:else}
                                   <b>GA：</b>统计已启用
                                 {/if}
@@ -14041,9 +14062,9 @@
         {:else}
           <div class="gsc-kpis ga-kpis">
             <div><small>活跃用户</small><b>{gscCompact(traffic?.active_users)}</b><span class="flat">近 {gaInsightsDays} 天</span></div>
-            <div><small>访问次数</small><b>{gscCompact(traffic?.sessions)}</b><span class="flat">近 {gaInsightsDays} 天</span></div>
-            <div><small>互动率</small><b>{gaPercent(traffic?.engagement_rate)}</b><span class="flat">有效互动访问</span></div>
-            <div><small>平均访问时长</small><b>{gaDuration(traffic?.average_session_duration)}</b><span class="flat">每次访问</span></div>
+            <div><small>会话数</small><b>{gscCompact(traffic?.sessions)}</b><span class="flat">近 {gaInsightsDays} 天</span></div>
+            <div><small>互动率</small><b>{gaPercent(traffic?.engagement_rate)}</b><span class="flat">有效互动会话</span></div>
+            <div><small>平均会话时长</small><b>{gaDuration(traffic?.average_session_duration)}</b><span class="flat">每次会话</span></div>
           </div>
         {/if}
         {#if gaInsightsErrors.traffic}<div class="gsc-inline-error">{gaInsightsErrors.traffic}</div>{/if}
@@ -14094,7 +14115,7 @@
                 <button type="button" class="gsc-row-check" class:selected aria-label={selected ? `取消选择 ${copy.label}` : `选择 ${copy.label}`} onclick={() => toggleGaSelection(focus)}>{selected ? '✓' : ''}</button>
                 <time>{copy.label}</time>
                 <span class="ga-trend-track" aria-hidden="true"><i style={`width:${Math.max(4, (row.sessions / gaTrendMax) * 100)}%`}></i></span>
-                <span><small>用户 / 访问</small><b>{gscCompact(row.active_users)} / {gscCompact(row.sessions)}</b></span>
+                <span><small>用户 / 会话</small><b>{gscCompact(row.active_users)} / {gscCompact(row.sessions)}</b></span>
                 <span><small>互动率</small><b>{gaPercent(row.engagement_rate)}</b></span>
                 <span><small>平均时长</small><b>{gaDuration(row.average_session_duration)}</b></span>
                 <button type="button" class="gsc-table-ai" data-tip={`让 AI 分析 ${copy.label} 的流量`} data-tip-align="end" aria-label={`让 AI 分析 ${copy.label}`} onclick={() => void handoffGaToChat(focus)}>{@render aiAnalyzeIcon(10)}</button>
@@ -14107,7 +14128,7 @@
               <div class="gsc-tr head" role="row">
                 <span></span>
                 <span>{activeGaDimensionGroup === 'sources' ? '渠道 / 来源' : activeGaDimensionGroup === 'geography' ? '国家 / 地区' : '设备 / 环境'}</span>
-                <span>用户 / 访问</span>
+                <span>用户 / 会话</span>
                 <span>互动率</span>
                 <span>平均时长</span>
               </div>
@@ -14129,7 +14150,7 @@
         {:else if visibleGaRows.length}
           <div class="gsc-table-wrap">
             <div class="gsc-table ga-page-table" role="table">
-              <div class="gsc-tr head" role="row"><span></span><span>页面</span><span>用户 / 访问</span><span>互动率</span><span>平均时长</span></div>
+              <div class="gsc-tr head" role="row"><span></span><span>页面</span><span>用户 / 会话</span><span>互动率</span><span>平均时长</span></div>
               {#each visibleGaRows as row, index (`ga-page:${row.path}:${index}`)}
                 {@const focus = gaPageSelection(row)}
                 {@const selected = gaIsSelected(focus)}
@@ -16035,7 +16056,9 @@
               <div><small>当前网站</small><b>{editorSite.url || hostOf(editorSite.url || '') || '未设置'}</b></div>
               <div><small>GA4 属性</small><b>{integrationSite.analytics.property || '自动匹配'}</b></div>
               <div><small>Measurement ID</small><b>{integrationSite.analytics.measurement_id || '等待 Google 返回'}</b></div>
-              <div><small>当前数据</small><b>活跃 {editorSite.integrations?.analytics.active_users ?? 0} · 访问 {editorSite.integrations?.analytics.sessions ?? 0}</b></div>
+              <div><small>当前数据</small><b>{editorSite.integrations?.analytics.active_users ?? 0} 位活跃用户 · {editorSite.integrations?.analytics.sessions ?? 0} 次会话</b></div>
+              <div><small>统计范围</small><b>{gaSummaryRangeLabel(editorSite)} · {editorSite.integrations?.analytics.scope_host || hostOf(editorSite.url || '') || '整个 GA4 属性'}</b></div>
+              <div><small>更新时间</small><b>{gaSummaryUpdatedLabel(editorSite)}</b></div>
             </div>
           {:else}
             <div class="integration-form-grid">
