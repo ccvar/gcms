@@ -598,10 +598,14 @@ struct CodexAppServer {
 
 static CODEX_APP_SERVERS: OnceLock<tokio::sync::Mutex<HashMap<String, Arc<CodexAppServer>>>> =
     OnceLock::new();
+// app-server 的启动和环境切换必须串行。短时解锁会改变子进程环境；若新进程在
+// Windows 旧进程真正退出前 resume 同一 thread，Codex 会拒绝第二个 writer。
+static CODEX_APP_SERVER_TRANSITION: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 enum CodexAppServerAttempt {
     Completed(TurnResult),
     Unavailable(String),
+    ThreadBusy(String),
 }
 
 impl CodexAppServer {
@@ -726,7 +730,32 @@ async fn codex_app_server(
         .rsplit_once(':')
         .map(|(scope, _)| format!("{scope}:"))
         .unwrap_or_default();
+    let transition = CODEX_APP_SERVER_TRANSITION.get_or_init(|| tokio::sync::Mutex::new(()));
+    let _transition_guard = transition.lock().await;
     let servers = CODEX_APP_SERVERS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
+
+    // 环境（尤其 GCMS 短时解锁令牌）变化时，先把同连接、同工作目录下已经空闲的
+    // 旧服务完整关停并 wait，再启动新服务。仅从 HashMap 移除会让 kill_on_drop 与
+    // 新 thread/resume 竞速，在 Windows 上尤其容易留下短暂的 active writer。
+    let stale_servers = {
+        let mut guard = servers.lock().await;
+        let stale_keys = guard
+            .iter()
+            .filter_map(|(existing_key, server)| {
+                (existing_key != &key
+                    && existing_key.starts_with(&scope)
+                    && server.sinks.lock().unwrap().is_empty())
+                .then_some(existing_key.clone())
+            })
+            .collect::<Vec<_>>();
+        stale_keys
+            .into_iter()
+            .filter_map(|stale_key| guard.remove(&stale_key))
+            .collect::<Vec<_>>()
+    };
+    for stale in stale_servers {
+        stale.shutdown().await;
+    }
     {
         let guard = servers.lock().await;
         if let Some(server) = guard.get(&key) {
@@ -869,9 +898,8 @@ async fn codex_app_server(
         .await?;
     server.notify("initialized", None)?;
     let mut guard = servers.lock().await;
-    // 凭据或短时解锁发生变化后，不把带旧环境的空闲 app-server 永久留在进程中。
-    // 正在执行的旧回合仍由其 Arc 持有，结束后自然 Drop。
-    guard.retain(|existing, _| !existing.starts_with(&scope) || existing == &key);
+    // 仍有其它对话在执行的旧环境服务不能强杀；它会在后续调用进入本函数时，
+    // sinks 变空后由上面的显式 shutdown 回收。
     guard.insert(key, server.clone());
     Ok(server)
 }
@@ -885,6 +913,45 @@ fn rpc_error_message(error: &serde_json::Value) -> String {
         .chars()
         .take(500)
         .collect()
+}
+
+fn codex_thread_has_active_writer(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("active writer")
+        || (normalized.contains("thread/resume") && normalized.contains("already has an active"))
+}
+
+fn codex_thread_busy_message() -> String {
+    "上一轮仍在收尾，底层会话暂时被占用。Pilot 已停止重复争抢；请稍候几秒后重试。若持续出现，请完全退出其它 Pilot 或 Codex 窗口后再打开。".into()
+}
+
+async fn resume_codex_thread(
+    server: &CodexAppServer,
+    params: serde_json::Value,
+) -> Result<(), String> {
+    // Windows 结束旧进程和释放 Codex thread writer 之间可能有很短的延迟。
+    // 只对这一种可恢复冲突退避；其它协议错误应立即走既有兼容路径。
+    const RETRY_DELAYS_MS: [u64; 5] = [150, 300, 600, 1_200, 2_400];
+    for (attempt, delay_ms) in RETRY_DELAYS_MS.into_iter().enumerate() {
+        match server
+            .request(
+                "thread/resume",
+                params.clone(),
+                std::time::Duration::from_secs(60),
+            )
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(error)
+                if codex_thread_has_active_writer(&error)
+                    && attempt + 1 < RETRY_DELAYS_MS.len() =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("resume retry loop always returns")
 }
 
 fn respond_to_codex_server_request(
@@ -1257,11 +1324,12 @@ async fn try_run_codex_app_server(
         if let Some(model) = model.as_ref() {
             params["model"] = serde_json::Value::String(model.clone());
         }
-        if let Err(error) = server
-            .request("thread/resume", params, std::time::Duration::from_secs(60))
-            .await
-        {
-            return CodexAppServerAttempt::Unavailable(error);
+        if let Err(error) = resume_codex_thread(&server, params).await {
+            return if codex_thread_has_active_writer(&error) {
+                CodexAppServerAttempt::ThreadBusy(codex_thread_busy_message())
+            } else {
+                CodexAppServerAttempt::Unavailable(error)
+            };
         }
         server
             .loaded_threads
@@ -1312,7 +1380,11 @@ async fn try_run_codex_app_server(
         Err(error) => {
             server.detach(&thread_id);
             registry.unregister(turn_id);
-            return CodexAppServerAttempt::Unavailable(error);
+            return if codex_thread_has_active_writer(&error) {
+                CodexAppServerAttempt::ThreadBusy(codex_thread_busy_message())
+            } else {
+                CodexAppServerAttempt::Unavailable(error)
+            };
         }
     };
     let server_turn_id = turn
@@ -1935,6 +2007,12 @@ pub async fn run_turn(
                 // app-server 仍是实验接口：当前 CLI 不支持、初始化失败或协议变化时，
                 // 静默回到已验证的 `codex exec`，避免用户失去对话能力。
                 eprintln!("[codex-app-server] fallback to codex exec: {reason}");
+            }
+            CodexAppServerAttempt::ThreadBusy(reason) => {
+                // 同一 thread 已有 writer 时绝不能再降级到 `codex exec resume`，否则
+                // 只会制造第二次争抢，并把 JSON-RPC 原始错误暴露给用户。
+                permit::sweep_conv(&perm.pending_dir, &turn_id);
+                return failed_turn_result(&session_ref, reason, &channel);
             }
         }
     }
@@ -3443,6 +3521,23 @@ mod tests {
             Some(true),
             "excludeTurns 会被 Codex 拒绝，除非初始化时协商 experimentalApi"
         );
+    }
+
+    #[test]
+    fn codex_active_writer_errors_are_not_sent_to_exec_fallback() {
+        for error in [
+            "thread/resume failed: thread abc already has an active writer (code -32600)",
+            "Thread/Resume: already has an ACTIVE WRITER",
+        ] {
+            assert!(codex_thread_has_active_writer(error));
+        }
+        assert!(!codex_thread_has_active_writer(
+            "thread/resume failed: thread not found"
+        ));
+        let message = codex_thread_busy_message();
+        assert!(message.contains("上一轮仍在收尾"));
+        assert!(!message.contains("active writer"));
+        assert!(!message.contains("-32600"));
     }
 
     #[test]
