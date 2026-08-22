@@ -1,7 +1,8 @@
 name: Pilot Release
 
 # 推形如 pilot-v0.1.8 的 tag 时：在 macOS + Windows runner 上各自打包 GCMS Pilot，
-# ed25519 签更新包，再由 publish 作业合成同时含两平台的 latest.json，一起发到 pilot-releases 仓。
+# ed25519 签更新包。各平台直接上传到目标 Release，避免依赖 GitHub Actions
+# 临时产物存储额度；最后由 publish 作业合成同时含两平台的 latest.json。
 on:
   push:
     tags:
@@ -96,30 +97,45 @@ jobs:
           node -e 'const fs=require("fs");const [dest,plat,url,sig]=process.argv.slice(1);fs.writeFileSync(dest,JSON.stringify({[plat]:{signature:sig,url}}))' "$out/frag-${PLATFORM}.json" "$PLATFORM" "$url" "$sig"
           ls -lh "$out"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.platform }}
-          path: dist/
-          retention-days: 1
+      - name: 直接上传平台产物
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PILOT_RELEASES_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # 两个平台可能同时到达这里。先创建草稿 Release；并发创建失败时，
+          # 再确认另一作业已经创建成功即可。
+          if ! gh release view "$VERSION" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            gh release create "$VERSION" \
+              --repo "$RELEASE_REPO" \
+              --title "$VERSION" \
+              --notes "GCMS Pilot ${VERSION#pilot-v}" \
+              --draft \
+              || gh release view "$VERSION" --repo "$RELEASE_REPO" >/dev/null
+          fi
+          gh release upload "$VERSION" "$GITHUB_WORKSPACE"/dist/* \
+            --repo "$RELEASE_REPO" \
+            --clobber
 
   publish:
     name: 合成 latest.json 并发布
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: all
-
-      - name: 汇总产物 + 合并两平台 latest.json
+      - name: 下载平台片段 + 合并 latest.json
         env:
+          GH_TOKEN: ${{ secrets.PILOT_RELEASES_TOKEN }}
           VERSION: ${{ github.ref_name }}
         run: |
-          set -e
+          set -euo pipefail
           ver="${VERSION#pilot-v}"
-          out="release"; rm -rf "$out"; mkdir -p "$out"
-          # 拷贝所有平台产物（排除中间的片段 json）
-          find all -type f ! -name 'frag-*.json' -exec cp {} "$out/" \;
+          root="all"; out="release"
+          rm -rf "$root" "$out"; mkdir -p "$root" "$out"
+          gh release download "$VERSION" \
+            --repo "$RELEASE_REPO" \
+            --pattern 'frag-*.json' \
+            --dir "$root"
           python3 - "$out/latest.json" "$ver" all <<'PY'
           import sys, json, glob, datetime, pathlib
           dest, ver, root = sys.argv[1:4]
@@ -132,18 +148,30 @@ jobs:
               "pub_date": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
               "platforms": platforms,
           }
+          if set(platforms) != {"darwin-aarch64", "windows-x86_64"}:
+              raise SystemExit(f"平台片段不完整: {sorted(platforms)}")
           pathlib.Path(dest).write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           PY
           echo "=== latest.json ==="; cat "$out/latest.json"; echo; ls -lh "$out"
 
       - name: 发布 Release（macOS + Windows 一起）
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: ${{ env.RELEASE_REPO }}
-          token: ${{ secrets.PILOT_RELEASES_TOKEN }}
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          make_latest: true
-          fail_on_unmatched_files: false
-          files: |
-            release/*
+        env:
+          GH_TOKEN: ${{ secrets.PILOT_RELEASES_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$VERSION" release/latest.json \
+            --repo "$RELEASE_REPO" \
+            --clobber
+          # 平台片段只用于合成 latest.json，不作为用户下载资产保留。
+          gh api "repos/${RELEASE_REPO}/releases/tags/${VERSION}" \
+            --jq '.assets[] | select(.name | startswith("frag-")) | .id' \
+            | while read -r asset_id; do
+                [ -z "$asset_id" ] || gh api --method DELETE "repos/${RELEASE_REPO}/releases/assets/${asset_id}"
+              done
+          gh release edit "$VERSION" \
+            --repo "$RELEASE_REPO" \
+            --title "$VERSION" \
+            --notes "GCMS Pilot ${VERSION#pilot-v}" \
+            --draft=false \
+            --latest
