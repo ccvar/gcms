@@ -163,15 +163,16 @@ jobs:
           gh release upload "$VERSION" release/latest.json \
             --repo "$RELEASE_REPO" \
             --clobber
-          # 平台片段只用于合成 latest.json，不作为用户下载资产保留。
-          gh api "repos/${RELEASE_REPO}/releases/tags/${VERSION}" \
-            --jq '.assets[] | select(.name | startswith("frag-")) | .id' \
-            | while read -r asset_id; do
-                [ -z "$asset_id" ] || gh api --method DELETE "repos/${RELEASE_REPO}/releases/assets/${asset_id}"
-              done
+          # 草稿 Release 的按 tag 查询接口会返回 404；先正式发布，再清理片段。
           gh release edit "$VERSION" \
             --repo "$RELEASE_REPO" \
             --title "$VERSION" \
             --notes "GCMS Pilot ${VERSION#pilot-v}" \
             --draft=false \
             --latest
+          # 平台片段只用于合成 latest.json，不作为用户下载资产保留。
+          gh api "repos/${RELEASE_REPO}/releases/tags/${VERSION}" \
+            --jq '.assets[] | select(.name | startswith("frag-")) | .id' \
+            | while read -r asset_id; do
+                [ -z "$asset_id" ] || gh api --method DELETE "repos/${RELEASE_REPO}/releases/assets/${asset_id}"
+              done
