@@ -127,7 +127,7 @@
   .ur-arc.warn { stroke: var(--warn, #b45309); }
 
   .ur-card {
-    position: fixed; z-index: 95; display: flex; flex-direction: column; overflow-y: auto;
+    position: fixed; z-index: 95; min-width: 0; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto;
     background: #fff; border: 1px solid var(--border2, #e2dfd7); border-radius: 12px;
     box-shadow: 0 12px 32px rgba(30, 25, 15, .16); padding: 7px 8px 8px;
   }

@@ -215,7 +215,7 @@
   .fx-sec-sub { font-weight: 500; letter-spacing: 0; color: var(--dim, #6b675f); }
   /* 菜单整体限高（position() 注入 max-height），只有模型列表这一段伸缩滚动——
      滑杆/用量常驻可见，也不会出现外层+列表的嵌套双滚动条。 */
-  .fx-opts { flex: 1 1 auto; min-height: 0; max-height: 250px; overflow-y: auto; overscroll-behavior: contain; }
+  .fx-opts { flex: 1 1 auto; min-width: 0; min-height: 0; max-height: 250px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
   /* 行内边距收窄（上下 6→3.5px）+ 文字行高压紧：整块模型列表更紧凑，一屏能多看几款 */
   .fx-opt { width: 100%; display: flex; align-items: center; gap: 8px; padding: 3.5px 8px; border: none; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; font: inherit; }
   .fx-opt:hover:not(:disabled) { background: #f4f3ef; }

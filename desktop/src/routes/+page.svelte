@@ -45,6 +45,7 @@
     skillKey: { id: 'skill-key-import', minWidth: 320, minHeight: 160, draggable: true, resizable: false, rememberPosition: true },
     ssh: { id: 'ssh-connection', minWidth: 460, minHeight: 420, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
     connectionRemark: { id: 'connection-remark', minWidth: 320, minHeight: 160, draggable: true, resizable: false, rememberPosition: true },
+    connectionKey: { id: 'connection-key', minWidth: 360, minHeight: 210, draggable: true, resizable: false, rememberPosition: true },
     fileOperation: { id: 'file-operation', minWidth: 320, minHeight: 160, draggable: true, resizable: false, rememberPosition: true },
     fileEditor: { id: 'file-editor', minWidth: 480, minHeight: 320, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
     cloudflare: { id: 'cloudflare-connect', minWidth: 380, minHeight: 360, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
@@ -2225,6 +2226,36 @@
       if (connRemarkEdit) {
         connRemarkEdit.error = String(e);
         connRemarkEdit.busy = false;
+      }
+    }
+  }
+  let connKeyEdit = $state<null | { id: string; name: string; kind: string; value: string; visible: boolean; busy: boolean; error: string }>(null);
+  function openConnKeyEdit(c: Connection) {
+    connCtx = null;
+    switcherOpen = false;
+    connKeyEdit = { id: c.id, name: c.name, kind: c.key_kind, value: '', visible: false, busy: false, error: '' };
+  }
+  async function saveConnKey() {
+    if (!connKeyEdit || connKeyEdit.busy) return;
+    const key = connKeyEdit.value.trim();
+    if (!key.startsWith(connKeyEdit.kind)) {
+      connKeyEdit.error = `当前连接需要以 ${connKeyEdit.kind} 开头的密钥`;
+      return;
+    }
+    connKeyEdit.busy = true;
+    connKeyEdit.error = '';
+    try {
+      const updated = await invoke<Connection>('update_connection_key', { connId: connKeyEdit.id, key });
+      conns = conns.map((connection) => (connection.id === updated.id ? updated : connection));
+      const wasActive = activeConnId === updated.id;
+      connKeyEdit.value = '';
+      connKeyEdit = null;
+      if (wasActive) await refreshSites(updated.id);
+      say('连接密钥已更新，连接和历史会话均已保留');
+    } catch (e) {
+      if (connKeyEdit) {
+        connKeyEdit.error = String(e);
+        connKeyEdit.busy = false;
       }
     }
   }
@@ -17678,6 +17709,9 @@
     {#if c.kind !== 'ssh'}
       <button class="ctx-item" role="menuitem" onclick={() => openConnRemark(c)}>{c.remark?.trim() ? '修改备注…' : '设置备注…'}</button>
     {/if}
+    {#if c.kind === 'gcms'}
+      <button class="ctx-item" role="menuitem" onclick={() => openConnKeyEdit(c)}>更新连接密钥…</button>
+    {/if}
     <div class="ctx-div"></div>
     <button
       class="ctx-item danger"
@@ -17700,6 +17734,29 @@
       <div class="row-end">
         <button class="btn ghost" onclick={() => (connRemarkEdit = null)} disabled={connRemarkEdit.busy}>取消</button>
         <button class="btn primary" onclick={() => void saveConnRemark()} disabled={connRemarkEdit.busy || connRemarkEdit.value.trim() === connRemarkEdit.original}>{connRemarkEdit.busy ? '保存中…' : '保存'}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if connKeyEdit}
+  <div class="mask" role="presentation" onclick={() => !connKeyEdit?.busy && (connKeyEdit = null)}></div>
+  <div class="modal conn-key-modal" use:dialogGeometry={DIALOG_GEOMETRY.connectionKey} role="dialog" aria-modal="true" aria-label="更新连接密钥">
+    <header class="sheet-head"><div><b>更新连接密钥</b><small class="dim">{connKeyEdit.name}</small></div><button class="x" onclick={() => (connKeyEdit = null)} disabled={connKeyEdit.busy}>×</button></header>
+    <div class="sheet-body">
+      <p class="hint">先用当前 API 验证新密钥；验证通过后才会替换系统凭据。连接、站点、技能包和历史会话不会改变。</p>
+      <div class="tfield">
+        <span>新密钥</span>
+        <div class="conn-key-input">
+          <!-- svelte-ignore a11y_autofocus -->
+          <input class="tin" type={connKeyEdit.visible ? 'text' : 'password'} bind:value={connKeyEdit.value} placeholder={`${connKeyEdit.kind}…`} spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" autofocus disabled={connKeyEdit.busy} onkeydown={(e) => e.key === 'Enter' && void saveConnKey()} />
+          <button class="btn ghost" type="button" onclick={() => connKeyEdit && (connKeyEdit.visible = !connKeyEdit.visible)} disabled={connKeyEdit.busy}>{connKeyEdit.visible ? '隐藏' : '显示'}</button>
+        </div>
+      </div>
+      {#if connKeyEdit.error}<div class="err-note">{connKeyEdit.error}</div>{/if}
+      <div class="row-end">
+        <button class="btn ghost" onclick={() => (connKeyEdit = null)} disabled={connKeyEdit.busy}>取消</button>
+        <button class="btn primary" onclick={() => void saveConnKey()} disabled={connKeyEdit.busy || !connKeyEdit.value.trim()}>{connKeyEdit.busy ? '验证并更新中…' : '验证并更新'}</button>
       </div>
     </div>
   </div>
@@ -18816,7 +18873,7 @@
   .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 0; }
   /* 吐司：pre-wrap 让「——详情——」多行错误可读；err 形态限高可滚动（安装失败输出末尾等） */
   .flash { position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 1200; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-app-region: no-drag; }
-  .flash.err { max-height: 42vh; overflow-y: auto; }
+  .flash.err { max-height: 42vh; overflow-x: hidden; overflow-y: auto; }
   /* 自定义右键菜单（替换 WKWebView 默认英文菜单） */
   .ctx-menu { position: fixed; z-index: 120; min-width: 148px; background: #fff; border: 1px solid var(--border); border-radius: 11px; box-shadow: 0 12px 32px rgba(30,25,15,.16); padding: 5px; animation: pop .1s ease-out; }
   .ctx-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 18px; background: none; border: none; border-radius: 7px; padding: 6px 10px; font: inherit; font-size: 13px; color: var(--text); cursor: pointer; text-align: left; }
@@ -18993,7 +19050,7 @@
   .search-head .si-ic { color: var(--faint); flex: none; }
   .search-head input { flex: 1; min-width: 0; border: none; outline: none; background: none; font: inherit; font-size: 15px; color: var(--text); }
   .search-head kbd { font: inherit; font-size: 10.5px; color: var(--faint); border: 1px solid var(--border2); border-radius: 5px; padding: 1px 6px; background: var(--rail); flex: none; }
-  .search-list { overflow-y: auto; padding: 6px; }
+  .search-list { min-width: 0; overflow-x: hidden; overflow-y: auto; padding: 6px; }
   .search-sec { padding: 8px 10px 3px; font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--faint); }
   /* 排期标题过滤小标签（仅全局搜索「在排期中查找」跳转后出现；点 × 清空恢复全量） */
   .sched-tq-chip { display: inline-flex; align-items: center; gap: 4px; width: fit-content; margin-top: 6px; padding: 2px 5px 2px 9px; border-radius: 999px; background: #fdf6e3; color: #9a6b00; font-size: 11.5px; }
@@ -19347,7 +19404,7 @@
   .sites-global-trigger:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(166 57 42 / 12%); }
   .sites-global-trigger.configured { opacity: .96; filter: none; }
   .sites-global-trigger.telegram.configured { color: #5d91ad; }
-  .sites-global-popover { position: absolute; z-index: 80; top: calc(100% + .5rem); right: 0; width: min(430px, calc(100vw - 2rem)); max-height: min(700px, calc(100vh - 86px)); overflow: auto; box-sizing: border-box; display: grid; gap: .68rem; padding: .78rem; border: 1px solid var(--border); border-radius: 9px; background: var(--card); box-shadow: 0 18px 42px rgb(27 26 23 / 14%); }
+  .sites-global-popover { position: absolute; z-index: 80; top: calc(100% + .5rem); right: 0; width: min(430px, calc(100vw - 2rem)); max-height: min(700px, calc(100vh - 86px)); overflow-x: hidden; overflow-y: auto; box-sizing: border-box; display: grid; gap: .68rem; padding: .78rem; border: 1px solid var(--border); border-radius: 9px; background: var(--card); box-shadow: 0 18px 42px rgb(27 26 23 / 14%); }
   .sites-global-popover.google-oauth-popover { width: min(460px, calc(100vw - 32px)); }
   .integration-loading.compact { min-height: 116px; }
   .google-pop-tabs { display: flex; gap: .22rem; padding: .2rem; border-radius: 8px; background: #efede7; }
@@ -20159,6 +20216,7 @@
   .deployment-stage {
     flex: 0 1 auto;
     min-height: 0;
+    overflow-x: hidden;
     overflow-y: auto;
     padding: 18px;
   }
@@ -20550,10 +20608,6 @@
   .task-settings-trigger.active { background: #ebe8e1; color: var(--text); }
 
   .modal.wide { width: min(520px, 94vw); }
-  /* 远程连接表单只需要纵向滚动。可缩放后的浮点像素取整会让 WebKit 偶发把
-     正文判定为横向溢出 1px，Windows WebView2 的原生滚动条也会因此出现。
-     收窄到这个弹窗处理，避免影响确实需要横向滚动的文件/日志视图。 */
-  .modal.ssh-modal > .sheet-body { min-width: 0; overflow-x: hidden; }
   .modal.ssh-modal .trow,
   .modal.ssh-modal .tfield,
   .modal.ssh-modal .ssh-key-row { max-width: 100%; }
@@ -20854,7 +20908,9 @@
   .modal { inset: 0; margin: auto; height: fit-content; max-height: 88vh; width: min(440px, 92vw); border-radius: 14px; overflow: hidden; }
   .sheet-head { box-sizing: border-box; min-height: 48px; display: flex; justify-content: space-between; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--border); }
   .sheet-head > b { min-width: 0; overflow: hidden; font-size: 13.5px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
-  .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+  /* 弹窗正文统一只允许纵向滚动。只声明 overflow-y:auto 会按 CSS 规则把横向轴
+     隐式计算成 auto；贴边 footer 的负边距和 WebView 的浮点取整都会因此冒出横向条。 */
+  .sheet-body { min-width: 0; padding: 16px 18px; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
   .skill-import-sheet { background: #fbfaf7; }
   .skill-import-head { gap: 12px; }
   .skill-import-title { min-width: 0; display: flex; align-items: center; gap: 9px; }
@@ -21594,6 +21650,13 @@
   .conn-remark-modal .sheet-head > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
   .conn-remark-modal .sheet-head b { flex: none; }
   .conn-remark-modal .sheet-head small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conn-key-modal { width: min(440px, 92vw); }
+  .conn-key-modal .sheet-head > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+  .conn-key-modal .sheet-head b { flex: none; }
+  .conn-key-modal .sheet-head small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conn-key-input { min-width: 0; max-width: 100%; display: flex; align-items: center; gap: 7px; }
+  .conn-key-input .tin { min-width: 0; max-width: 100%; flex: 1 1 0; }
+  .conn-key-input .btn { flex: none; }
   .sec-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 1px; }
   .sec-head.mt { margin-top: 12px; }
   .transfer-entry { width: 100%; margin-top: 13px; padding: 9px 0; border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: transparent; color: var(--text); display: flex; align-items: center; gap: 9px; text-align: left; cursor: pointer; }

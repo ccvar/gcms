@@ -605,6 +605,44 @@ impl ConnStore {
         Ok(out)
     }
 
+    /// 原地替换 GCMS 连接密钥。连接 id、技能目录、站点和会话均保持不变。
+    /// 调用方必须先用当前 API 地址验证新密钥；这里仅负责持久化。
+    ///
+    /// 先提交脱敏元数据，再写系统凭据库：这样即使旧凭据已经丢失，也不需要为了
+    /// 回滚去读取旧条目（避免再次触发一串钥匙串授权框）。凭据写入失败时恢复元数据。
+    pub fn replace_gcms_key(&self, id: &str, key: &str) -> Result<Connection, String> {
+        let key = key.trim();
+        let mut conns = self.list();
+        let Some(target) = conns.iter().position(|connection| connection.id == id) else {
+            return Err(format!("未找到连接 {id}"));
+        };
+        if conns[target].kind != "gcms" {
+            return Err("这不是 GCMS 技能包连接".into());
+        }
+        let expected = conns[target].key_kind.as_str();
+        if !matches!(expected, "gcmsp_" | "gcms_") {
+            return Err("当前连接的密钥类型无法更新".into());
+        }
+        if !key.starts_with(expected) {
+            return Err(format!("当前连接需要以 {expected} 开头的密钥"));
+        }
+
+        let previous_prefix = conns[target].key_prefix.clone();
+        conns[target].key_prefix = keychain::key_prefix(key);
+        let out = conns[target].clone();
+        self.save(&conns)?;
+        if let Err(error) = keychain::set_key(id, key) {
+            conns[target].key_prefix = previous_prefix;
+            return match self.save(&conns) {
+                Ok(()) => Err(format!("写入系统凭据库失败，原连接未改变：{error}")),
+                Err(restore_error) => Err(format!(
+                    "写入系统凭据库失败：{error}；恢复连接元数据失败：{restore_error}"
+                )),
+            };
+        }
+        Ok(out)
+    }
+
     /// 把一个 Cloudflare Zone 固定到明确连接。写入前会从其它连接移除同 Zone，避免后续
     /// DNS/橙云操作因连接遍历顺序变化而换 Token。
     pub fn set_cloudflare_zone_preference(

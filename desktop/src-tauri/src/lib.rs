@@ -1068,6 +1068,71 @@ async fn set_connection_remark(
         .map_err(|e| e.to_string())?
 }
 
+fn gcms_key_validation_url(conn: &pack::Connection, key: &str) -> Result<String, String> {
+    if conn.kind != "gcms" {
+        return Err("这不是 GCMS 技能包连接".into());
+    }
+    let expected = conn.key_kind.as_str();
+    if !matches!(expected, "gcmsp_" | "gcms_") {
+        return Err("当前连接的密钥类型无法更新".into());
+    }
+    if !key.starts_with(expected) {
+        return Err(format!("当前连接需要以 {expected} 开头的密钥"));
+    }
+    let base = conn.api_base.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("当前连接缺少 API 地址".into());
+    }
+    Ok(if expected == "gcmsp_" {
+        format!("{base}/sites")
+    } else {
+        format!("{base}/languages")
+    })
+}
+
+/// 验证成功后原地替换连接密钥；不会重新生成连接，也不会改动技能目录或历史会话。
+#[tauri::command]
+async fn update_connection_key(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    key: String,
+) -> Result<pack::Connection, String> {
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Err("新密钥不能为空".into());
+    }
+    let conn = state.conns.get(&conn_id)?;
+    let url = gcms_key_validation_url(&conn, &key)?;
+    let response = reqwest::Client::new()
+        .get(url)
+        .bearer_auth(&key)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|error| {
+            if error.is_timeout() {
+                "验证新密钥超时，未更新连接".to_string()
+            } else {
+                format!("无法连接当前 GCMS API，未更新连接：{error}")
+            }
+        })?;
+    let status = response.status();
+    if matches!(
+        status,
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) {
+        return Err("新密钥无效或无权访问当前连接，未更新连接".into());
+    }
+    if !status.is_success() {
+        return Err(format!("验证新密钥失败（HTTP {status}），未更新连接"));
+    }
+
+    let store = state.conns.clone();
+    tauri::async_runtime::spawn_blocking(move || store.replace_gcms_key(&conn_id, &key))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn discover_sites(
     state: tauri::State<'_, AppState>,
@@ -1532,6 +1597,35 @@ mod cloudflare_import_tests {
         let message = redact_cloudflare_token(format!("invalid token: {token}"), token);
         assert!(!message.contains(token));
         assert!(message.contains("Token 已隐藏"));
+    }
+
+    #[test]
+    fn connection_key_validation_uses_read_only_endpoint_for_each_key_kind() {
+        assert_eq!(
+            gcms_key_validation_url(
+                &connection("gcms", "gcmsp_", "https://cms.example.com/api/platform/v1/"),
+                "gcmsp_new_key"
+            )
+            .unwrap(),
+            "https://cms.example.com/api/platform/v1/sites"
+        );
+        assert_eq!(
+            gcms_key_validation_url(
+                &connection("gcms", "gcms_", "https://site.example.com/api/admin/v1"),
+                "gcms_new_key"
+            )
+            .unwrap(),
+            "https://site.example.com/api/admin/v1/languages"
+        );
+    }
+
+    #[test]
+    fn connection_key_validation_rejects_wrong_key_kind() {
+        assert!(gcms_key_validation_url(
+            &connection("gcms", "gcmsp_", "https://cms.example.com/api/platform/v1"),
+            "gcms_wrong_kind"
+        )
+        .is_err());
     }
 }
 
@@ -8504,6 +8598,7 @@ pub fn run() {
             update_pack,
             remove_connection,
             set_connection_remark,
+            update_connection_key,
             open_conn_window,
             open_site_theme_window,
             close_site_theme_window,

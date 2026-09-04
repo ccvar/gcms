@@ -192,7 +192,7 @@
   .dd-menu {
     position: fixed; z-index: 90;
     background: #fff; border: 1px solid var(--border, #ecebe6); border-radius: 12px;
-    box-shadow: 0 12px 32px rgba(30,25,15,.14); padding: 5px; max-height: 280px; overflow-y: auto;
+    box-shadow: 0 12px 32px rgba(30,25,15,.14); padding: 5px; max-height: 280px; overflow-x: hidden; overflow-y: auto;
     animation: pop .1s ease-out;
   }
   @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
