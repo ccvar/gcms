@@ -319,8 +319,11 @@ func (s *Server) adminExtPin(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
+	before, _ := s.store.GetPostByID(id)
 	_ = s.store.SetFeatured(id, r.FormValue("on") == "1")
+	after, _ := s.store.GetPostByID(id)
 	s.clearGeneratedCaches()
+	s.fireContentChangeHooks(r, before, after)
 	http.Redirect(w, r, s.adminListRedirect("/admin/ext/"+ct.Key, r), http.StatusSeeOther)
 }
 
@@ -448,7 +451,7 @@ func (s *Server) adminExtUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
-	s.firePublishHooks(r, p) // 发布钩子（与 adminUpdate 一致）
+	s.fireContentChangeHooks(r, existing, p)
 	http.Redirect(w, r, fmt.Sprintf("/admin/ext/%s/%d/edit?saved=1", ct.Key, id), http.StatusSeeOther)
 }
 
@@ -472,6 +475,7 @@ func (s *Server) adminExtDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	s.fireContentChangeHooks(r, existing, nil)
 	http.Redirect(w, r, "/admin/ext/"+ct.Key+"?deleted=1", http.StatusSeeOther)
 }
 

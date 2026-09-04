@@ -27,6 +27,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 18H8a5 5 0 1 1 1.5-9.8A6 6 0 0 1 21 10.5 3.8 3.8 0 0 1 17.5 18z"/><path d="M8 21h8"/><path d="M12 18v3"/></svg>
         <span>{{.Admin.T "admin.settings.menu.cloudflare" "Cloudflare 部署"}}</span>
       </a>
+      <a href="/admin/settings/indexnow"{{if eq .Section "indexnow"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h12"/><path d="m13 8 4 4-4 4"/><path d="M19 5v14"/><path d="M5 5h4"/><path d="M5 19h4"/></svg>
+        <span>{{.Admin.T "admin.settings.menu.indexnow" "IndexNow"}}</span>
+      </a>
       <a href="/admin/settings/comments"{{if eq .Section "comments"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 14.5a4.5 4.5 0 0 1-4.5 4.5H8l-5 3V7.5A4.5 4.5 0 0 1 7.5 3h9A4.5 4.5 0 0 1 21 7.5z"/></svg>
         <span>{{.Admin.T "admin.settings.menu.comments" "评论"}}</span>
@@ -2770,6 +2774,63 @@
           </ol>
         </div>
       </details>
+
+      {{else if eq .Section "indexnow"}}
+      <form method="post" action="/admin/settings/indexnow" class="admin-form">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="field-group">
+          <h3 class="group-head with-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h12"/><path d="m13 8 4 4-4 4"/><path d="M19 5v14"/><path d="M5 5h4"/><path d="M5 19h4"/></svg>
+            <span>IndexNow</span>
+          </h3>
+          <p class="muted automation-note">内容发布、更新、改网址或下线后，系统会把受影响的公开 URL 加入持久队列，并批量通知支持 IndexNow 的搜索引擎。搜索结果是否收录仍由搜索引擎决定；搜索页等 noindex 页面不会提交。</p>
+          <div class="field">
+            <input type="hidden" name="enabled" value="0">
+            <label class="tweak-toggle"><input type="checkbox" name="enabled" value="1"{{if .Settings.IndexNowEnabled}} checked{{end}}><span>启用自动提交</span></label>
+            <span class="hint">队列每分钟检查一次，同一 URL 的连续修改会合并，失败后自动重试。</span>
+          </div>
+          <button class="btn btn-primary" type="submit">保存 IndexNow 设置</button>
+        </div>
+      </form>
+
+      <div class="field-group">
+        <h3 class="group-head">运行状态</h3>
+        <table class="admin-table">
+          <tbody>
+            <tr><th>待提交 URL</th><td><strong>{{.Settings.IndexNowPending}}</strong></td></tr>
+            <tr><th>最近 HTTP 状态</th><td>{{if eq .Settings.IndexNowLastStatus "0"}}网络错误{{else if .Settings.IndexNowLastStatus}}HTTP {{.Settings.IndexNowLastStatus}}{{else}}尚未提交{{end}}</td></tr>
+            <tr><th>最近成功时间</th><td>{{if .Settings.IndexNowLastSuccess}}{{.Settings.IndexNowLastSuccess}}{{else}}—{{end}}</td></tr>
+            <tr><th>校验文件</th><td>{{if .Settings.IndexNowKeyURL}}<a href="{{.Settings.IndexNowKeyURL}}" target="_blank" rel="noopener noreferrer"><code>{{.Settings.IndexNowKeyURL}}</code></a>{{else}}开启后自动生成{{end}}</td></tr>
+            {{if .Settings.IndexNowLastError}}<tr><th>最近错误</th><td class="danger">{{.Settings.IndexNowLastError}}</td></tr>{{end}}
+          </tbody>
+        </table>
+        <form method="post" action="/admin/settings/indexnow/sync" data-confirm-title="确认全量提交" data-confirm-ok="加入提交队列" data-confirm="把当前 sitemap 中的全部公开 URL 加入 IndexNow 队列？适合首次启用或迁移域名后使用，平时无需重复操作。" style="margin-top:1rem">
+          <input type="hidden" name="_csrf" value="{{.CSRF}}">
+          <button class="btn" type="submit"{{if not .Settings.IndexNowEnabled}} disabled{{end}}>按 sitemap 全量提交一次</button>
+        </form>
+        <p class="hint">如果站点使用手动 Cloudflare 静态部署，首次开启后请先部署一次，确认上面的校验文件可访问，再做全量提交。</p>
+      </div>
+
+      <div class="field-group">
+        <h3 class="group-head">最近提交记录</h3>
+        {{if .IndexNowRecords}}
+        <div style="overflow:auto">
+          <table class="admin-table">
+            <thead><tr><th>URL</th><th>原因</th><th>结果</th><th>时间</th></tr></thead>
+            <tbody>
+              {{range .IndexNowRecords}}
+              <tr>
+                <td><a href="{{.URL}}" target="_blank" rel="noopener noreferrer"><code>{{.URL}}</code></a>{{if .Error}}<div class="slug">{{.Error}}</div>{{end}}</td>
+                <td>{{if eq .Reason "publish"}}发布{{else if eq .Reason "update"}}更新{{else if eq .Reason "remove"}}下线/旧网址{{else if eq .Reason "initial_sync"}}全量同步{{else}}{{.Reason}}{{end}}</td>
+                <td>{{if eq .StatusCode 202}}<span class="status published">已接收（校验中）</span>{{else if .Success}}<span class="status published">成功</span>{{else}}<span class="status draft">失败</span>{{end}} {{if gt .StatusCode 0}}HTTP {{.StatusCode}}{{end}}</td>
+                <td>{{adminDateTime .SubmittedAt}}</td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}<p class="muted">暂无提交记录。首次全量同步或内容发生变更后会显示在这里。</p>{{end}}
+      </div>
 
       {{else if eq .Section "comments"}}
       {{$giscusReady := and .Settings.GiscusRepo .Settings.GiscusRepoID .Settings.GiscusCategory .Settings.GiscusCategoryID}}

@@ -72,7 +72,8 @@ type Server struct {
 	statsMu    sync.Mutex                 // 统计端点的内存缓存（防 Google 配额）
 	statsCache map[string]statsCacheEntry // key: 端点|property|参数
 
-	indexNowMu sync.Mutex // IndexNow key 首次生成的互斥（防并发双写 settings）
+	indexNowMu     sync.Mutex // IndexNow key 首次生成的互斥（防并发双写 settings）
+	indexNowSendMu sync.Mutex // 同一站点同一时间只投递一个持久队列批次
 
 	runtimeMu sync.RWMutex
 	runtimes  *SiteRuntimePool
@@ -1627,6 +1628,8 @@ type View struct {
 	ArchivedSites                []*platform.ArchivedSite
 	ArchivedSiteIcons            map[int64]string
 	MediaCleanupSites            []MediaCleanupSite // 平台存储清理页的站点列表
+	IndexNowRecords              []IndexNowRecordView
+	IndexNowPendingTotal         int
 	BackupConfig                 backup.Config
 	BackupRecords                []*backup.BackupRecord
 	BackupDir                    string
@@ -1793,6 +1796,13 @@ type SettingsForm struct {
 	TelegramChannelURL string
 	TelegramAutoPush   bool
 	TelegramLastError  string
+	// IndexNow（设置 - IndexNow）。Key 是公开校验文件，仅展示完整校验 URL。
+	IndexNowEnabled     bool
+	IndexNowKeyURL      string
+	IndexNowPending     int
+	IndexNowLastSuccess string
+	IndexNowLastStatus  string
+	IndexNowLastError   string
 	// 站点类型（创建时的一次性预设，settings.site.kind 仅记录用；此处只读展示）
 	SiteKind string
 	// 联系方式与询盘按钮（设置 - 联系方式）
@@ -1808,6 +1818,19 @@ type SettingsForm struct {
 	AllPath        string
 	AllDescription string
 	ExternalLinks  ExternalLinkPolicyForm
+}
+
+// IndexNowRecordView adds site identity to a per-site delivery history row.
+type IndexNowRecordView struct {
+	SiteID      int64
+	SiteName    string
+	SiteSlug    string
+	URL         string
+	Reason      string
+	StatusCode  int
+	Success     bool
+	Error       string
+	SubmittedAt time.Time
 }
 
 const (
@@ -1970,6 +1993,22 @@ func (s *Server) platformRuntimePool() *SiteRuntimePool {
 		root = root.rootServer
 	}
 	return root.runtimePool()
+}
+
+func (s *Server) platformRuntimesSnapshot() map[int64]*SiteRuntime {
+	root := s
+	for root.rootServer != nil {
+		root = root.rootServer
+	}
+	root.runtimeMu.RLock()
+	defer root.runtimeMu.RUnlock()
+	out := map[int64]*SiteRuntime{}
+	if root.runtimes != nil {
+		for id, rt := range root.runtimes.byID {
+			out[id] = rt
+		}
+	}
+	return out
 }
 
 func (s *Server) setRuntimePool(pool *SiteRuntimePool) {
@@ -3353,6 +3392,8 @@ func platformOnlyPath(path string) bool {
 		return true
 	case path == "/admin/platform/settings":
 		return true
+	case path == "/admin/indexnow":
+		return true
 	case path == "/admin/server-health":
 		return true
 	case path == "/admin/pre-active", path == "/admin/pre-stable":
@@ -4687,6 +4728,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/archive", s.requireAuth(s.adminArchiveSite))
 	mux.HandleFunc("GET /admin/sites/{id}/uploads/{name}", s.requireAuth(s.adminSiteUpload))
 	mux.HandleFunc("GET /admin/platform/settings", s.requireAuth(s.adminPlatformSettings))
+	mux.HandleFunc("GET /admin/indexnow", s.requireAuth(s.adminIndexNowRecords))
 	mux.HandleFunc("GET /admin/backups", s.requireAuth(s.adminBackups))
 	mux.HandleFunc("POST /admin/backups", s.requireAuth(s.adminCreateBackup))
 	mux.HandleFunc("POST /admin/backups/config", s.requireAuth(s.adminSaveBackupConfig))
@@ -4729,6 +4771,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/telegram/test", s.requireAuth(s.adminTelegramTest))
 	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
 	mux.HandleFunc("POST /admin/settings/cloudflare", s.requireAuth(s.adminSaveCloudflare))
+	mux.HandleFunc("POST /admin/settings/indexnow", s.requireAuth(s.adminSaveIndexNow))
+	mux.HandleFunc("POST /admin/settings/indexnow/sync", s.requireAuth(s.adminIndexNowSync))
 	mux.HandleFunc("POST /admin/settings/cloudflare/sync", s.requireAuth(s.adminSaveCloudflareSync))
 	mux.HandleFunc("POST /admin/settings/cloudflare/deploy", s.requireAuth(s.adminStartCloudflareDeploy))
 	mux.HandleFunc("POST /admin/settings/cloudflare/unpublish", s.requireAuth(s.adminStartCloudflareUnpublish))

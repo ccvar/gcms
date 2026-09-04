@@ -26,6 +26,22 @@ func stubCloudflareTokenVerify(t *testing.T, fn func(context.Context, string) er
 	t.Cleanup(func() { verifyCloudflareAPIToken = prev })
 }
 
+func chdirForTest(t *testing.T, dir string) {
+	t.Helper()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("change working directory to %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previous); err != nil {
+			t.Errorf("restore working directory to %s: %v", previous, err)
+		}
+	})
+}
+
 func TestNormalizeCloudflareWorkerName(t *testing.T) {
 	tests := map[string]string{
 		"":                  cloudflareDefaultWorkerName,
@@ -159,7 +175,7 @@ func TestCloudflarePagesDNSTarget(t *testing.T) {
 }
 
 func TestCloudflareViewInfersLegacyPublishedDeployment(t *testing.T) {
-	t.Chdir(t.TempDir())
+	chdirForTest(t, t.TempDir())
 	writeCloudflareStatus(CloudflareStatus{
 		Status:  "idle",
 		Message: "暂无 Cloudflare 部署任务",
@@ -208,7 +224,7 @@ func TestCloudflareViewInfersLegacyPublishedDeployment(t *testing.T) {
 }
 
 func TestCloudflareViewDoesNotInferFreshConfigAsPublished(t *testing.T) {
-	t.Chdir(t.TempDir())
+	chdirForTest(t, t.TempDir())
 	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -237,7 +253,7 @@ func TestCloudflareViewDoesNotInferFreshConfigAsPublished(t *testing.T) {
 
 func TestCloudflareStatusIsIsolatedPerSite(t *testing.T) {
 	runDir := t.TempDir()
-	t.Chdir(runDir)
+	chdirForTest(t, runDir)
 	now := time.Now().UTC().Format(time.RFC3339)
 	writeCloudflareStatus(CloudflareStatus{
 		Status:        "success",
@@ -289,7 +305,7 @@ func TestCloudflareStatusIsIsolatedPerSite(t *testing.T) {
 }
 
 func TestCloudflareViewDoesNotInferUnpublishedStatusAsPublished(t *testing.T) {
-	t.Chdir(t.TempDir())
+	chdirForTest(t, t.TempDir())
 	writeCloudflareStatus(CloudflareStatus{
 		Status:  "success",
 		Message: "Cloudflare 公开入口已取消；项目和静态资源仍保留在 Cloudflare，DNS 未被删除。",
@@ -396,7 +412,7 @@ func TestExportStaticSiteUsesCurrentSiteWhenPlatformHostDiffers(t *testing.T) {
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatalf("create runtime dir: %v", err)
 	}
-	t.Chdir(runDir)
+	chdirForTest(t, runDir)
 
 	dir := t.TempDir()
 	defaultDB := filepath.Join(dir, "cms.db")
@@ -625,7 +641,7 @@ func TestStaticPaginationUsesPrettyPaths(t *testing.T) {
 }
 
 func TestCloudflareCanonicalFrontendRedirectsOrigin(t *testing.T) {
-	t.Chdir(t.TempDir())
+	chdirForTest(t, t.TempDir())
 	writeCloudflareStatus(CloudflareStatus{
 		Status:        "success",
 		LastDeployAt:  time.Now().UTC().Format(time.RFC3339),
@@ -656,7 +672,7 @@ func TestCloudflareCanonicalFrontendRedirectsOrigin(t *testing.T) {
 }
 
 func TestCloudflareCanonicalFrontendSourceMode(t *testing.T) {
-	t.Chdir(t.TempDir())
+	chdirForTest(t, t.TempDir())
 	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -706,7 +722,7 @@ func TestCloudflareStatusStale(t *testing.T) {
 }
 
 func TestCloudflareStatusFailedKeepsPreviousStep(t *testing.T) {
-	t.Chdir(t.TempDir())
+	chdirForTest(t, t.TempDir())
 	cfg := CloudflareConfig{
 		APIToken:   "token",
 		DeployMode: cloudflareModeWorkerAssets,

@@ -328,6 +328,30 @@ CREATE TABLE IF NOT EXISTS tg_pushed (
   ts           TEXT NOT NULL,
   UNIQUE(content_type, content_id)
 );
+
+CREATE TABLE IF NOT EXISTS indexnow_queue (
+  url          TEXT PRIMARY KEY,
+  reason       TEXT NOT NULL DEFAULT 'update',
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  available_at TEXT NOT NULL,
+  last_error   TEXT NOT NULL DEFAULT '',
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_indexnow_queue_due ON indexnow_queue(available_at, updated_at);
+
+CREATE TABLE IF NOT EXISTS indexnow_submissions (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  url          TEXT NOT NULL,
+  reason       TEXT NOT NULL DEFAULT 'update',
+  status_code  INTEGER NOT NULL DEFAULT 0,
+  success      INTEGER NOT NULL DEFAULT 0,
+  error        TEXT NOT NULL DEFAULT '',
+  submitted_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_indexnow_submissions_time ON indexnow_submissions(submitted_at DESC, id DESC);
 `
 
 func (s *Store) migrate() error {

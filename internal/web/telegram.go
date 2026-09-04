@@ -319,7 +319,6 @@ func (s *Server) telegramDeliver(token, channel, contentType string, postID int6
 
 // RunScheduledPublish 由 main 的分钟定时器调用：把到点的「定时发布」翻为已发布，
 // 清理完整前台缓存、按本站规则触发 Cloudflare 内容同步并触发 Telegram 推送。
-// 维持既有决策：该路径不提交 IndexNow（见 indexnow.go；定时翻发布与修订恢复两路均不提交）。
 //
 // ★ 必须遍历**每一个站**。平台是「一个进程按域名伺候所有站」，每个非默认站有自己的库
 // （runtimeForSite → store.Open(site.DBPath)）；而 s.store 只是**默认站**那一个。
@@ -355,7 +354,7 @@ func (s *Server) publishDueForSite() {
 	}
 	s.clearGeneratedCaches()
 	for _, p := range posts {
-		s.fireTelegramPush(nil, p)
+		s.firePublishHooks(nil, p)
 	}
 }
 

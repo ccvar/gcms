@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1640,6 +1641,56 @@ func (s *Server) adminPlatformSettings(w http.ResponseWriter, r *http.Request) {
 	s.rnd.Admin(w, "platform_settings", http.StatusOK, v)
 }
 
+func (s *Server) adminIndexNowRecords(w http.ResponseWriter, r *http.Request) {
+	if s.platform == nil {
+		http.Redirect(w, r, "/admin/settings/indexnow", http.StatusSeeOther)
+		return
+	}
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "IndexNow 提交记录")
+	s.platformAuthed(v, sess)
+	sites, err := s.platform.Sites()
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	runtimes := s.platformRuntimesSnapshot()
+	for _, site := range sites {
+		if site == nil {
+			continue
+		}
+		rt := runtimes[site.ID]
+		if rt == nil || rt.Store == nil {
+			continue
+		}
+		if count, countErr := rt.Store.IndexNowQueueCount(); countErr == nil {
+			v.IndexNowPendingTotal += count
+		}
+		records, listErr := rt.Store.ListIndexNowSubmissions(200)
+		if listErr != nil {
+			s.serverError(w, listErr)
+			return
+		}
+		for _, record := range records {
+			if record == nil {
+				continue
+			}
+			v.IndexNowRecords = append(v.IndexNowRecords, IndexNowRecordView{
+				SiteID: site.ID, SiteName: site.Name, SiteSlug: site.Slug,
+				URL: record.URL, Reason: record.Reason, StatusCode: record.StatusCode,
+				Success: record.Success, Error: record.Error, SubmittedAt: record.SubmittedAt,
+			})
+		}
+	}
+	sort.Slice(v.IndexNowRecords, func(i, j int) bool {
+		return v.IndexNowRecords[i].SubmittedAt.After(v.IndexNowRecords[j].SubmittedAt)
+	})
+	if len(v.IndexNowRecords) > 500 {
+		v.IndexNowRecords = v.IndexNowRecords[:500]
+	}
+	s.rnd.Admin(w, "indexnow_records", http.StatusOK, v)
+}
+
 func (s *Server) adminBackups(w http.ResponseWriter, r *http.Request) {
 	s.showAdminBackups(w, r, "", "")
 }
@@ -3115,6 +3166,7 @@ func (s *Server) adminVisualSave(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "关于页面不存在。"})
 			return
 		}
+		before := *page
 		field := strings.TrimPrefix(key, "page.about.")
 		old := ""
 		switch field {
@@ -3145,6 +3197,7 @@ func (s *Server) adminVisualSave(w http.ResponseWriter, r *http.Request) {
 			New:   value,
 		})
 		s.clearGeneratedCaches()
+		s.fireContentChangeHooks(r, &before, page)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已保存。", "history": h})
 		return
 	}
@@ -3885,7 +3938,7 @@ func (s *Server) adminUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
-	s.firePublishHooks(r, p)
+	s.fireContentChangeHooks(r, existing, p)
 	http.Redirect(w, r, fmt.Sprintf("/admin/posts/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -3893,11 +3946,13 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
+	existing, _ := s.store.GetPostByID(atoi64(r.PathValue("id")))
 	if err := s.store.DeletePost(atoi64(r.PathValue("id"))); err != nil {
 		s.serverError(w, err)
 		return
 	}
 	s.clearGeneratedCaches()
+	s.fireContentChangeHooks(r, existing, nil)
 	http.Redirect(w, r, s.adminListRedirect("/admin/posts", r), http.StatusSeeOther)
 }
 
@@ -3905,8 +3960,12 @@ func (s *Server) adminPin(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
-	_ = s.store.SetFeatured(atoi64(r.PathValue("id")), r.FormValue("on") == "1")
+	id := atoi64(r.PathValue("id"))
+	before, _ := s.store.GetPostByID(id)
+	_ = s.store.SetFeatured(id, r.FormValue("on") == "1")
+	after, _ := s.store.GetPostByID(id)
 	s.clearGeneratedCaches()
+	s.fireContentChangeHooks(r, before, after)
 	http.Redirect(w, r, s.adminListRedirect("/admin/posts", r), http.StatusSeeOther)
 }
 
@@ -4112,7 +4171,7 @@ func (s *Server) adminLinkUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
-	s.firePublishHooks(r, p)
+	s.fireContentChangeHooks(r, existing, p)
 	http.Redirect(w, r, fmt.Sprintf("/admin/links/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -4120,8 +4179,10 @@ func (s *Server) adminLinkDelete(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
+	existing, _ := s.store.GetPostByID(atoi64(r.PathValue("id")))
 	_ = s.store.DeletePost(atoi64(r.PathValue("id")))
 	s.clearGeneratedCaches()
+	s.fireContentChangeHooks(r, existing, nil)
 	http.Redirect(w, r, s.adminListRedirect("/admin/links", r), http.StatusSeeOther)
 }
 
@@ -4129,8 +4190,12 @@ func (s *Server) adminLinkPin(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
-	_ = s.store.SetFeatured(atoi64(r.PathValue("id")), r.FormValue("on") == "1")
+	id := atoi64(r.PathValue("id"))
+	before, _ := s.store.GetPostByID(id)
+	_ = s.store.SetFeatured(id, r.FormValue("on") == "1")
+	after, _ := s.store.GetPostByID(id)
 	s.clearGeneratedCaches()
+	s.fireContentChangeHooks(r, before, after)
 	http.Redirect(w, r, s.adminListRedirect("/admin/links", r), http.StatusSeeOther)
 }
 
@@ -4153,6 +4218,7 @@ func (s *Server) adminContentStatus(w http.ResponseWriter, r *http.Request, kind
 		return
 	}
 	target := strings.TrimSpace(r.FormValue("target_status"))
+	before := *p
 	now := time.Now()
 	switch target {
 	case "published":
@@ -4178,13 +4244,13 @@ func (s *Server) adminContentStatus(w http.ResponseWriter, r *http.Request, kind
 		return
 	}
 	s.clearGeneratedCaches()
-	s.firePublishHooks(r, p)
+	s.fireContentChangeHooks(r, &before, p)
 	http.Redirect(w, r, s.adminListRedirect(listPath, r), http.StatusSeeOther)
 }
 
 // ---------- 站点设置（分区独立保存）----------
 
-var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "cloudflare": true, "comments": true, "telegram": true, "contact": true, "updates": true, "security": true}
+var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "cloudflare": true, "indexnow": true, "comments": true, "telegram": true, "contact": true, "updates": true, "security": true}
 
 func themeName(id string) string {
 	for _, t := range Themes {
@@ -4908,6 +4974,28 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.AutomationLogs, _ = s.store.ListAutomationLogs(20)
 	case "cloudflare":
 		v.Cloudflare = s.cloudflareViewForRequest(r)
+	case "indexnow":
+		v.Settings.IndexNowEnabled = s.indexNowEnabled()
+		v.Settings.IndexNowLastSuccess = s.store.Setting(indexNowLastSuccessSetting)
+		if parsed, err := time.Parse(time.RFC3339, v.Settings.IndexNowLastSuccess); err == nil {
+			v.Settings.IndexNowLastSuccess = parsed.Local().Format("2006-01-02 15:04:05")
+		}
+		v.Settings.IndexNowLastStatus = s.store.Setting(indexNowLastStatusSetting)
+		v.Settings.IndexNowLastError = s.store.Setting(indexNowLastErrorSetting)
+		v.Settings.IndexNowPending, _ = s.store.IndexNowQueueCount()
+		if key := strings.TrimSpace(s.store.Setting(indexNowKeySetting)); key != "" {
+			v.Settings.IndexNowKeyURL = absWithBase(s.publicBaseURL(r), "/"+key+".txt")
+		}
+		records, _ := s.store.ListIndexNowSubmissions(50)
+		for _, record := range records {
+			if record == nil {
+				continue
+			}
+			v.IndexNowRecords = append(v.IndexNowRecords, IndexNowRecordView{
+				URL: record.URL, Reason: record.Reason, StatusCode: record.StatusCode,
+				Success: record.Success, Error: record.Error, SubmittedAt: record.SubmittedAt,
+			})
+		}
 	case "updates":
 		v.Update = s.currentUpdateInfo()
 		v.Upgrade = readUpgradeStatus()
@@ -4918,6 +5006,58 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		status = http.StatusBadRequest
 	}
 	s.rnd.Admin(w, "settings", status, v)
+}
+
+func (s *Server) adminSaveIndexNow(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	enabled := r.FormValue("enabled") == "1"
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	if err := s.store.SetSetting(indexNowEnabledSetting, value); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if enabled {
+		if _, err := s.indexNowKey(); err != nil {
+			s.showSettings(w, r, "indexnow", "", "生成 IndexNow 校验密钥失败："+err.Error())
+			return
+		}
+		s.clearGeneratedCaches()
+	}
+	flash := "IndexNow 已关闭；已有待提交记录会保留。"
+	if enabled {
+		flash = "IndexNow 已开启。发布、更新、下线内容时会自动提交相关 URL。"
+	}
+	s.redirectSettings(w, r, "indexnow", flash)
+}
+
+func (s *Server) adminIndexNowSync(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if !s.indexNowEnabled() {
+		s.showSettings(w, r, "indexnow", "", "请先开启 IndexNow。")
+		return
+	}
+	if isLocalBaseURL(s.publicBaseURL(r)) {
+		s.showSettings(w, r, "indexnow", "", "当前站点没有可公开访问的正式域名，暂不能提交。")
+		return
+	}
+	if _, err := s.indexNowKey(); err != nil {
+		s.showSettings(w, r, "indexnow", "", "生成 IndexNow 校验密钥失败："+err.Error())
+		return
+	}
+	urls, err := s.indexNowSitemapURLs(r)
+	if err != nil {
+		s.showSettings(w, r, "indexnow", "", "读取 sitemap 失败："+err.Error())
+		return
+	}
+	s.enqueueIndexNowURLs(urls, "initial_sync", indexNowDebounce)
+	s.redirectSettings(w, r, "indexnow", fmt.Sprintf("已把 sitemap 中 %d 条 URL 加入 IndexNow 提交队列。", len(urls)))
 }
 
 func (s *Server) adminCreateAutomationKey(w http.ResponseWriter, r *http.Request) {
@@ -6229,7 +6369,7 @@ func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
-	s.firePublishHooks(r, updated)
+	s.fireContentChangeHooks(r, p, updated)
 	http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -6255,6 +6395,7 @@ func (s *Server) adminPageDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	s.fireContentChangeHooks(r, p, nil)
 	http.Redirect(w, r, s.adminListRedirect("/admin/pages", r), http.StatusSeeOther)
 }
 

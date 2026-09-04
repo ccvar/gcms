@@ -183,6 +183,13 @@ func (s *Server) exportStaticSiteLocked(ctx context.Context, cfg CloudflareConfi
 	if err := render("/robots.txt", "/robots.txt"); err != nil {
 		return nil, err
 	}
+	// IndexNow verifies host ownership from this root file. It must be part of
+	// the immutable static deployment before queued URLs are delivered.
+	if key := strings.TrimSpace(s.store.Setting(indexNowKeySetting)); key != "" {
+		if err := s.exportBytes("/"+key+".txt", []byte(key), "text/plain; charset=utf-8", result); err != nil {
+			return nil, err
+		}
+	}
 	if err := render("/favicon.ico", "/favicon.ico"); err != nil {
 		return nil, err
 	}

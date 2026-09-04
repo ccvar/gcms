@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -76,7 +77,7 @@ func TestGoogleAnalyticsPropertyStreamSummariesKeepPartialResults(t *testing.T) 
 	t.Cleanup(func() { googleHTTPClient = oldGoogleHTTPClient })
 
 	properties := []googleAnalyticsPropertyOption{{Name: "properties/123"}, {Name: "properties/456"}}
-	failed, attempted, err := applyGoogleAnalyticsPropertyStreamSummaries(t.Context(), "token", properties, "https://example.com")
+	failed, attempted, err := applyGoogleAnalyticsPropertyStreamSummaries(context.Background(), "token", properties, "https://example.com")
 	if failed != 1 || attempted != 2 || err == nil {
 		t.Fatalf("failed/attempted/err = %d/%d/%v", failed, attempted, err)
 	}
@@ -96,7 +97,7 @@ func TestGoogleAnalyticsPropertiesCacheReusesSuccessfulResult(t *testing.T) {
 		return []googleAnalyticsAccountOption{{Name: "accounts/1"}}, []googleAnalyticsPropertyOption{{Name: "properties/1"}}, "", nil
 	}
 	for i := 0; i < 2; i++ {
-		accounts, properties, warning, err := cache.load(t.Context(), "account|https://example.com", loader)
+		accounts, properties, warning, err := cache.load(context.Background(), "account|https://example.com", loader)
 		if err != nil || warning != "" || len(accounts) != 1 || len(properties) != 1 {
 			t.Fatalf("cache load %d = accounts:%v properties:%v warning:%q err:%v", i, accounts, properties, warning, err)
 		}

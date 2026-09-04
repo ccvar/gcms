@@ -549,8 +549,15 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if platformSettingsPage.Code != http.StatusOK {
 		t.Fatalf("platform settings status = %d, body = %s", platformSettingsPage.Code, platformSettingsPage.Body.String())
 	}
-	if body := platformSettingsPage.Body.String(); !strings.Contains(body, `href="/admin/security"`) || !strings.Contains(body, `href="/admin/updates"`) || !strings.Contains(body, `href="/admin/admin-i18n"`) || !strings.Contains(body, `href="/admin/backups"`) || !strings.Contains(body, `href="/admin/archived-sites"`) || strings.Contains(body, `href="/admin/posts"`) {
+	if body := platformSettingsPage.Body.String(); !strings.Contains(body, `href="/admin/security"`) || !strings.Contains(body, `href="/admin/updates"`) || !strings.Contains(body, `href="/admin/admin-i18n"`) || !strings.Contains(body, `href="/admin/backups"`) || !strings.Contains(body, `href="/admin/indexnow"`) || !strings.Contains(body, `href="/admin/archived-sites"`) || strings.Contains(body, `href="/admin/posts"`) {
 		t.Fatalf("platform settings page did not render platform setting entries")
+	}
+	indexNowPage := getPlatform("/admin/indexnow")
+	if indexNowPage.Code != http.StatusOK {
+		t.Fatalf("indexnow records status = %d location=%q body=%s", indexNowPage.Code, indexNowPage.Header().Get("Location"), indexNowPage.Body.String())
+	}
+	if body := indexNowPage.Body.String(); !strings.Contains(body, "IndexNow 提交记录") || !strings.Contains(body, "投递历史") || strings.Contains(body, `class="settings-shell"`) {
+		t.Fatalf("indexnow records did not render as a platform settings page")
 	}
 
 	backupsPage := httptest.NewRecorder()

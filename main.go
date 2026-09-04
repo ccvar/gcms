@@ -98,14 +98,15 @@ func main() {
 		log.Fatalf("初始化 Web 失败: %v", err)
 	}
 
-	// 定时把到点的「定时发布」文章翻为已发布（启动时先处理一次）。
-	// 走 Server 方法而非裸 st.PublishDue()：翻发布同时触发发布钩子（sitemap 缓存失效、Telegram 推送）。
+	// 定时发布与 IndexNow 队列都按站点处理；启动时先处理一次，之后每分钟巡检。
 	srv.RunScheduledPublish()
+	srv.RunIndexNow()
 	go func() {
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()
 		for range t.C {
 			srv.RunScheduledPublish()
+			srv.RunIndexNow()
 		}
 	}()
 

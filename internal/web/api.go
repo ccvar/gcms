@@ -1560,7 +1560,7 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 	updated, _ := s.store.GetPostByID(next.ID)
 	s.recordAutomationLog(auth, "update", kind, next.ID, s.automationContentLogMessage("update", kind, &next))
 	s.clearGeneratedCaches()
-	s.firePublishHooks(r, updated)
+	s.fireContentChangeHooks(r, existing, updated)
 	w.Header().Set("ETag", store.PostETag(updated))
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
 }
@@ -1665,6 +1665,7 @@ func (s *Server) apiRelinkContent(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordAutomationLog(auth, "relink", kind, existing.ID, fmt.Sprintf("relink %s#%d → trans_group=%s", kind, existing.ID, existing.TransGroup))
 	s.clearGeneratedCaches()
+	s.fireContentChangeHooks(r, existing, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true), "trans_group": existing.TransGroup, "members": list})
 }
 
@@ -1725,6 +1726,7 @@ func (s *Server) apiUpdateContentFeatured(w http.ResponseWriter, r *http.Request
 	}
 	s.recordAutomationLog(auth, action, kind, existing.ID, fmt.Sprintf("%s%s：%s", label, apiKindName(kind), existing.Title))
 	s.clearGeneratedCaches()
+	s.fireContentChangeHooks(r, existing, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
 }
 

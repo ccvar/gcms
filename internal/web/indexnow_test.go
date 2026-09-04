@@ -1,9 +1,11 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"testing"
 	"time"
 
@@ -26,6 +28,53 @@ func TestGenerateIndexNowKey(t *testing.T) {
 	}
 	if a == b {
 		t.Fatalf("两次生成的 key 相同：%q", a)
+	}
+}
+
+func TestRunIndexNowBatchesByHostAndRecordsHistory(t *testing.T) {
+	s, _ := newTestAutomationServer(t, "posts:read")
+	if err := s.store.SetSetting(indexNowEnabledSetting, "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SetSetting(indexNowKeySetting, "0123456789abcdef0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	for _, pageURL := range []string{"https://one.example/en/posts/a/", "https://two.example/en/posts/b/"} {
+		if err := s.store.EnqueueIndexNow(pageURL, "update", time.Now().Add(-time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var hosts []string
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json; charset=utf-8" {
+			t.Errorf("request method/content-type = %s/%s", r.Method, r.Header.Get("Content-Type"))
+		}
+		var payload indexNowBatchPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		hosts = append(hosts, payload.Host)
+		if len(payload.URLList) != 1 || payload.KeyLocation != "https://"+payload.Host+"/"+payload.Key+".txt" {
+			t.Errorf("payload = %+v", payload)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer endpoint.Close()
+	oldEndpoint, oldClient := indexNowEndpoint, indexNowHTTPClient
+	indexNowEndpoint, indexNowHTTPClient = endpoint.URL, endpoint.Client()
+	defer func() { indexNowEndpoint, indexNowHTTPClient = oldEndpoint, oldClient }()
+
+	s.runIndexNowForSite()
+	sort.Strings(hosts)
+	if got, want := hosts, []string{"one.example", "two.example"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("submitted hosts = %v, want %v", got, want)
+	}
+	if count, _ := s.store.IndexNowQueueCount(); count != 0 {
+		t.Fatalf("queue count = %d, want 0", count)
+	}
+	history, err := s.store.ListIndexNowSubmissions(10)
+	if err != nil || len(history) != 2 || !history[0].Success || history[0].StatusCode != http.StatusAccepted {
+		t.Fatalf("history = %+v, err=%v", history, err)
 	}
 }
 

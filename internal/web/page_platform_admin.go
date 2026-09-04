@@ -1506,7 +1506,7 @@ func (s *Server) adminPageProjectPublish(w http.ResponseWriter, r *http.Request)
 	}
 	s.invalidatePageProjectPublication()
 	if published, _ := s.store.GetPostByID(page.ID); published != nil {
-		s.firePublishHooks(r, published)
+		s.fireContentChangeHooks(r, page, published)
 	}
 	http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/project?published=1", page.ID), http.StatusSeeOther)
 }
@@ -1666,7 +1666,7 @@ func (s *Server) adminPageProjectRollback(w http.ResponseWriter, r *http.Request
 	}
 	s.invalidatePageProjectPublication()
 	if published, _ := s.store.GetPostByID(page.ID); published != nil {
-		s.firePublishHooks(r, published)
+		s.fireContentChangeHooks(r, page, published)
 	}
 	http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/project?rolled_back=1", page.ID), http.StatusSeeOther)
 }
