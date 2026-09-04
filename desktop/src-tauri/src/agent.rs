@@ -1572,7 +1572,7 @@ PILOT_TASK: {{\"title\":\"简短任务名\",\"prompt\":\"每次到点要执行�
     format!("{base}{role}{GCMS_BATCH_POLICY}")
 }
 
-/// 与任何连接、站点和技能包都隔离的自由对话提示词。
+/// 与任何连接、站点和通用技能都隔离的自由对话提示词。
 /// cwd 只是一块可选本地工作区；不能因为 Pilot 当前选中了某条连接就读取或操作 GCMS。
 pub fn workspace_system_prompt(has_folder: bool) -> String {
     let workspace = if has_folder {
@@ -1869,6 +1869,7 @@ pub async fn run_turn(
     effort: String,
     // fast 模式：只有 Opus 5 / Opus 4.8 支持（CLI 2.1.205+ 才认 headless 的 fastMode 键）。
     fast: bool,
+    selected_skill_ids: Vec<String>,
     data_dir: PathBuf,
     ssh: crate::ssh::SshSessions,
     session_ref: String,
@@ -1880,7 +1881,33 @@ pub async fn run_turn(
 ) -> TurnResult {
     // 用户消息仍按原文写入 conversations.json；这里只增强发给执行器的临时副本。
     // 每轮注入才能覆盖升级前已经建立的 Claude/Codex session。
-    let message = conversation_completion_policy(&message, &conn.kind);
+    let mut message = conversation_completion_policy(&message, &conn.kind);
+    // 通用技能由技能工作区的会话显式选择；普通站点/自由对话不再自动注入全部技能。
+    // 每轮重新注入，既覆盖 CLI resume，也能在技能后来被停用时立即停止使用。
+    match crate::skills::selected_skill_prompt(&data_dir, &selected_skill_ids) {
+        Ok(prompt) if !prompt.is_empty() => {
+            message.push_str("\n\n<pilot-user-skills>\n");
+            message.push_str(&prompt);
+            message.push_str("</pilot-user-skills>");
+        }
+        Ok(_) => {}
+        Err(error) => {
+            let _ = channel.send(TurnEvent::Done {
+                ok: false,
+                error: error.clone(),
+            });
+            return TurnResult {
+                ok: false,
+                text: String::new(),
+                tools: vec![],
+                error,
+                session_ref,
+                proposal: None,
+                usage: None,
+                limit_reset: None,
+            };
+        }
+    }
     // ssh 连接没有 API key（密码/口令是给 Pilot 连机器用的，绝不进子进程），
     // 且无口令私钥根本没有钥匙串条目 —— 这里拿不到不算错。
     let api_key = if conn.kind == "ssh" || conn.kind == "workspace" {
@@ -2560,15 +2587,11 @@ fn build_claude(
         .args(["--model", model]);
     // 权限档位 → claude 参数（plan/ask/auto/full）；ask/auto 会生成 PreToolUse 钩子 + settings。
     cmd.args(&perm_flags);
-    // 思考等级 → MAX_THINKING_TOKENS（无头模式实测能开出 thinking 块）；空＝跟随模型默认。
-    let budget = match effort {
-        "low" => "4096",
-        "medium" => "16384",
-        "high" => "32000",
-        _ => "",
-    };
-    if !budget.is_empty() {
-        cmd.env("MAX_THINKING_TOKENS", budget);
+    // 直接使用 Claude Code 的原生 adaptive-reasoning 档位。旧实现把三档换算成固定的
+    // MAX_THINKING_TOKENS，导致界面“拉满”其实仍只是 high，也无法表达 xhigh/max。
+    // 空值不传参数，继续跟随所选模型默认档位。
+    if matches!(effort, "low" | "medium" | "high" | "xhigh" | "max") {
+        cmd.args(["--effort", effort]);
     }
     // Claude Code 原生 auto-compact 会在**同一个 session**内清理旧工具输出并摘要历史，
     // 不会像 Pilot 旧逻辑那样换 UUID。给它留 10% 余量，避免大文件/工具输出在默认约 95%
@@ -3900,6 +3923,54 @@ mod tests {
         assert_eq!(resume_stdin, resume_message);
         assert!(resume_prompt_file.is_none());
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn claude_effort_uses_native_cli_level_instead_of_fixed_token_budget() {
+        let conn: Connection = serde_json::from_value(json!({
+            "id": "test", "name": "test", "kind": "ssh", "api_base": "", "skill_dir": ".",
+            "key_prefix": "", "key_kind": "", "created_at": ""
+        }))
+        .unwrap();
+        let root =
+            std::env::temp_dir().join(format!("gcms-pilot-claude-effort-{}", uuid::Uuid::new_v4()));
+        let perm = PermSpec {
+            mode: PermMode::Plan,
+            conv_id: "conv-effort".into(),
+            gen_dir: root.join("hooks"),
+            pending_dir: root.join("pending"),
+            ssh_js: root.join("ssh.js"),
+            fast: false,
+        };
+
+        let (cmd, _, prompt_file) = build_claude(
+            &conn,
+            "claude-opus-5",
+            "max",
+            "75739ec2-daa6-44c0-930c-30309ca88e45",
+            true,
+            None,
+            "测试",
+            "",
+            ".",
+            &perm,
+            None,
+            None,
+        )
+        .unwrap();
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.windows(2).any(|pair| pair == ["--effort", "max"]));
+        assert!(cmd
+            .as_std()
+            .get_envs()
+            .all(|(key, _)| key != "MAX_THINKING_TOKENS"));
+
+        drop(prompt_file);
         let _ = fs::remove_dir_all(root);
     }
 

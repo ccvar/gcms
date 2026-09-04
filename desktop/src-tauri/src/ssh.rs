@@ -118,7 +118,7 @@ pub fn auth_for(conn: &crate::pack::Connection) -> Result<SshAuth, String> {
     } else {
         SshAuth {
             user: conn.ssh_user.clone(),
-            password: Some(secret.ok_or("钥匙串里没有这个连接的密码，请删除后重新添加")?),
+            password: Some(secret.ok_or("钥匙串里没有这个连接的密码，请编辑连接并补录密码")?),
             key_path: None,
             key_pass: None,
         }
@@ -888,6 +888,33 @@ impl SshSessions {
         sftp.rename(from, to)
             .await
             .map_err(|e| format!("重命名失败: {e}"))
+    }
+
+    /// 在远端服务器内部复制文件、目录或符号链接。数据不经过 Pilot 本机，目录复制也不会
+    /// 因为逐文件 SFTP 往返而变慢；`-a` 保留权限、时间和符号链接语义。
+    pub async fn copy_path(&self, conn_id: &str, from: &str, to: &str) -> Result<(), String> {
+        let from = from.trim();
+        let to = to.trim();
+        if from.is_empty() || to.is_empty() || from == to {
+            return Err("复制的来源和目标无效".to_string());
+        }
+        let command = format!(
+            "cp -a -- {} {}",
+            posix_shell_quote(from),
+            posix_shell_quote(to)
+        );
+        let output = self.exec(conn_id, &command, 300, false).await?;
+        if output.code == 0 {
+            return Ok(());
+        }
+        let detail = if !output.stderr.trim().is_empty() {
+            output.stderr.trim()
+        } else if !output.stdout.trim().is_empty() {
+            output.stdout.trim()
+        } else {
+            "远端未返回详细原因"
+        };
+        Err(format!("复制失败（退出码 {}）：{detail}", output.code))
     }
 
     pub async fn remove(&self, conn_id: &str, path: &str, dir: bool) -> Result<(), String> {

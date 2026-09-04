@@ -4922,16 +4922,22 @@ pub(super) async fn gcms_remote_migration_stage(
 #[tauri::command]
 pub(super) async fn gcms_remote_migration_instances(
     state: tauri::State<'_, AppState>,
+    refresh_remote: Option<bool>,
 ) -> Result<Vec<GcmsMigrationSnapshot>, String> {
-    if state
-        .gcms_installing
-        .lock()
-        .map(|active| active.is_empty())
-        .unwrap_or(false)
+    let refresh_remote = refresh_remote.unwrap_or(true);
+    if refresh_remote
+        && state
+            .gcms_installing
+            .lock()
+            .map(|active| active.is_empty())
+            .unwrap_or(false)
     {
         clear_migration_cache(&state.data_dir);
     }
     let mut instances = read_migration_registry(&state.data_dir);
+    if !refresh_remote {
+        return Ok(instances);
+    }
     for instance in &mut instances {
         let previous_remote_state = instance.remote_state.clone();
         match state.conns.get(&instance.target_id) {

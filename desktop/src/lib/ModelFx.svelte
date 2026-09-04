@@ -24,12 +24,37 @@
   const FAST_OK = ['claude-opus-5', 'claude-opus-4-8'];
   const fastable = $derived(FAST_OK.some((m) => value.endsWith('::' + m) || value === m));
 
-  const STOPS = [
-    { v: '', l: '默认', d: '跟随模型' },
+  type Stop = { v: string; l: string; d: string };
+  const BASE_STOPS: Stop[] = [
+    { v: '', l: '自动', d: '跟随模型默认' },
     { v: 'low', l: '低', d: '更快更省' },
     { v: 'medium', l: '中', d: '均衡' },
-    { v: 'high', l: '高', d: '更缜密 · 更慢' },
+    { v: 'high', l: '高', d: '深度推理' },
   ];
+  /**
+   * 不同执行器的原生 effort 档位并不相同，滑杆必须按当前模型动态展示：
+   * Claude Code: low / medium / high / xhigh / max
+   * Grok CLI: none / minimal / low / medium / high / xhigh / max
+   * Codex 目前仍只向兼容的本地 CLI 暴露 low / medium / high。
+   */
+  const CLAUDE_STOPS: Stop[] = [
+    ...BASE_STOPS,
+    { v: 'xhigh', l: '极高', d: '扩展推理' },
+    { v: 'max', l: '最高', d: '最大推理 · 最慢' },
+  ];
+  const GROK_STOPS: Stop[] = [
+    { v: '', l: '自动', d: '跟随模型默认' },
+    { v: 'none', l: '无', d: '不推理' },
+    { v: 'minimal', l: '极低', d: '最少推理' },
+    { v: 'low', l: '低', d: '更快更省' },
+    { v: 'medium', l: '中', d: '均衡' },
+    { v: 'high', l: '高', d: '深度推理' },
+    { v: 'xhigh', l: '极高', d: '扩展推理' },
+    { v: 'max', l: '最高', d: '最大推理 · 最慢' },
+  ];
+  const brain = $derived(value.includes('::') ? value.slice(0, value.indexOf('::')) : '');
+  const brainName = $derived(brain === 'claude' ? 'Claude' : brain === 'grok' ? 'Grok' : brain === 'codex' ? 'Codex' : '模型');
+  const stops = $derived(brain === 'claude' ? CLAUDE_STOPS : brain === 'grok' ? GROK_STOPS : BASE_STOPS);
 
   let open = $state(false);
   let root = $state<HTMLElement>();
@@ -38,12 +63,12 @@
   let menuStyle = $state('');
 
   const current = $derived(options.find((o) => o.value === value));
-  const idx = $derived(Math.max(0, STOPS.findIndex((s) => s.v === effort)));
+  const idx = $derived(Math.max(0, stops.findIndex((s) => s.v === effort)));
   /** 拖动中的原始位置（0-100）；null＝未在拖，显示已选档位 */
   let dragPct = $state<number | null>(null);
-  const pct = $derived(dragPct ?? (idx / (STOPS.length - 1)) * 100);
+  const pct = $derived(dragPct ?? (idx / (stops.length - 1)) * 100);
   /** 面板标题实时预览：拖到哪就显示哪个档（松手才真正提交） */
-  const liveIdx = $derived(dragPct === null ? idx : Math.round((dragPct / 100) * (STOPS.length - 1)));
+  const liveIdx = $derived(dragPct === null ? idx : Math.round((dragPct / 100) * (stops.length - 1)));
 
   // 浮层 fixed 定位（触发器都在底部 composer：向上开），左边界钳制防溢出。
   function position() {
@@ -70,7 +95,7 @@
     if (o.value !== value) onpick(o.value);
   }
   function setIdx(i: number) {
-    const v = STOPS[Math.max(0, Math.min(STOPS.length - 1, i))].v;
+    const v = stops[Math.max(0, Math.min(stops.length - 1, i))].v;
     if (v !== effort) oneffort(v);
   }
   // 拖动：pointer capture，拖动中 1:1 跟手（不吸附），松手才落到最近档（带缓动）。
@@ -88,7 +113,7 @@
   function onUp() {
     if (!dragging) return;
     dragging = false;
-    if (dragPct !== null) setIdx(Math.round((dragPct / 100) * (STOPS.length - 1)));
+    if (dragPct !== null) setIdx(Math.round((dragPct / 100) * (stops.length - 1)));
     dragPct = null; // 回到档位定位，transition 重新生效＝松手吸附缓动
   }
 
@@ -119,7 +144,7 @@
   <button type="button" class="fx-trigger" class:open onclick={toggle}>
     {#if current?.icon}<BrainIcon brain={current.icon} size={13} />{/if}
     <span class="fx-label">{current?.label ?? (value || '模型')}</span>
-    {#if idx > 0}<span class="fx-eff">{STOPS[idx].l}</span>{/if}
+    {#if idx > 0}<span class="fx-eff">{stops[idx].l}</span>{/if}
     <svg class="fx-chev" width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
   </button>
   {#if open}
@@ -135,12 +160,12 @@
         {/each}
       </div>
       <div class="fx-div"></div>
-      <div class="fx-sec">推理强度<span class="fx-sec-sub">{STOPS[liveIdx].l}{STOPS[liveIdx].d ? ' · ' + STOPS[liveIdx].d : ''}</span></div>
+      <div class="fx-sec">推理强度<span class="fx-sec-sub">{stops[liveIdx].l} · {brainName} {stops[liveIdx].v || 'auto'}{stops[liveIdx].d ? ' · ' + stops[liveIdx].d : ''}</span></div>
       <div class="fx-ends"><span>更快</span><span>更缜密</span></div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="fx-slider" class:drag={dragging} class:max={pct >= 99.5} style="--p:{pct}" bind:this={track} onpointerdown={onDown} onpointermove={onMove} onpointerup={onUp} onpointercancel={onUp}>
         <span class="fx-fill"></span>
-        {#each STOPS as st, i (st.v)}<span class="fx-dot" class:last={i === STOPS.length - 1} style="left:calc(11px + (100% - 22px) * {i} / {STOPS.length - 1})"></span>{/each}
+        {#each stops as st, i (st.v)}<span class="fx-dot" class:last={i === stops.length - 1} style="left:calc(11px + (100% - 22px) * {i} / {stops.length - 1})"></span>{/each}
         <span class="fx-fx">
           <span class="px px-a"></span>
           <span class="px px-b"></span>
@@ -148,6 +173,11 @@
           <span class="fx-sweep"></span>
         </span>
         <span class="fx-thumb"></span>
+      </div>
+      <div class="fx-stop-labels" style={`--stop-count:${stops.length}`}>
+        {#each stops as st, i (st.v)}
+          <button type="button" class:on={i === liveIdx} title={`${brainName} ${st.v || 'auto'}：${st.d}`} onclick={() => setIdx(i)}>{st.l}</button>
+        {/each}
       </div>
       {#if fastable}
         <div class="fx-div"></div>
@@ -198,6 +228,9 @@
   .fx-div { flex: none; height: 1px; margin: 5px 4px; background: var(--border, #ecebe6); }
 
   .fx-ends { flex: none; display: flex; justify-content: space-between; padding: 0 10px 4px; font-size: 10.5px; color: var(--faint, #9b968c); }
+  .fx-stop-labels { flex: none; display: grid; grid-template-columns: repeat(var(--stop-count), minmax(0, 1fr)); margin: -2px 8px 4px; }
+  .fx-stop-labels button { min-width: 0; padding: 2px 0; border: 0; background: transparent; color: var(--faint, #9b968c); font: inherit; font-size: 9.5px; line-height: 1.2; cursor: pointer; text-align: center; }
+  .fx-stop-labels button:hover, .fx-stop-labels button.on { color: var(--text, #26241f); font-weight: 650; }
   /* 粗胶囊轨道：底为浅灰点阵（右侧渐显），填充为暖色渐变叠白色星点 */
   .fx-slider {
     position: relative; height: 30px; margin: 0 8px 6px; border-radius: 999px; overflow: hidden;

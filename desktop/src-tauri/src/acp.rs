@@ -107,8 +107,11 @@ pub async fn run_turn(
     if !model.is_empty() {
         cmd.args(["--model", &model]);
     }
-    // 推理强度直通（grok 另有 xhigh/max 档，Pilot 三档语义与两家对齐即可）；空＝跟随默认。
-    if matches!(effort.as_str(), "low" | "medium" | "high") {
+    // 推理强度按 Grok CLI 原生档位直通；空＝跟随默认。
+    if matches!(
+        effort.as_str(),
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+    ) {
         cmd.args(["--reasoning-effort", &effort]);
     }
     // full 档让 agent 自己全放行（省一来一回）；其余档位靠权限桥逐个裁决。

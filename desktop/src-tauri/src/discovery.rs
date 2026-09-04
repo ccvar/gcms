@@ -16,7 +16,15 @@ pub async fn discover_with_refresh(
     conn: &Connection,
     refresh_stats: bool,
 ) -> Result<Value, String> {
-    let key = keychain::get_key(&conn.id)?;
+    let mut key = keychain::get_key(&conn.id)?;
+    // connections.json 只保存脱敏前缀。若它与保险库里的值不一致，说明连接刚完成
+    // 密钥轮换、但另一个 Pilot 进程留下了旧保险库快照。此时只恢复当前连接的兼容
+    // 备份，不遍历其它连接，也不会重新制造启动时的一串授权框。
+    if !conn.key_prefix.trim().is_empty() && keychain::key_prefix(&key) != conn.key_prefix {
+        if let Some(recovered) = keychain::refresh_key_from_legacy(&conn.id)? {
+            key = recovered;
+        }
+    }
     if conn.key_kind == "gcms_" {
         // 单站连接：没有发现端点，合成一个条目保证 UI 统一。
         return Ok(json!({
@@ -36,18 +44,35 @@ pub async fn discover_with_refresh(
     } else {
         format!("{}/sites", conn.api_base)
     };
-    let resp = reqwest::Client::new()
+    let client = reqwest::Client::new();
+    let timeout = std::time::Duration::from_secs(if refresh_stats { 90 } else { 15 });
+    let mut resp = client
         .get(&url)
         .header("Authorization", format!("Bearer {key}"))
         // 主动刷新会并发读取多个站点的 Google 摘要，允许比普通发现更长的窗口。
-        .timeout(std::time::Duration::from_secs(if refresh_stats {
-            90
-        } else {
-            15
-        }))
+        .timeout(timeout)
         .send()
         .await
         .map_err(|e| format!("请求发现接口失败: {e}"))?;
+    // 统一保险库可能被另一个旧进程的缓存覆盖。仅在服务端明确拒绝认证时，读取一次
+    // 逐连接备份并重试；正常启动不会遍历旧条目，也就不会重新制造成串授权框。
+    if matches!(
+        resp.status(),
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) {
+        if let Some(recovered) = keychain::refresh_key_from_legacy(&conn.id)? {
+            if recovered != key {
+                key = recovered;
+                resp = client
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {key}"))
+                    .timeout(timeout)
+                    .send()
+                    .await
+                    .map_err(|e| format!("恢复凭据后重试发现接口失败: {e}"))?;
+            }
+        }
+    }
     let status = resp.status();
     let retry_after = resp
         .headers()

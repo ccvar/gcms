@@ -515,7 +515,7 @@ export interface CliUpdateInfo {
 // ---- 对话 ----
 
 /** article/free 为旧会话兼容值；workspace 是不注入任何连接或站点上下文的自由对话。 */
-export type TaskType = 'siteops' | 'sitebuild' | 'workspace' | 'remote' | 'article' | 'free';
+export type TaskType = 'siteops' | 'sitebuild' | 'workspace' | 'skill' | 'remote' | 'article' | 'free';
 
 export interface ToolCall {
   label: string;
@@ -551,6 +551,8 @@ export interface Conversation {
   site_slug: string;
   site_name: string;
   task_type: TaskType;
+  /** 技能工作区会话显式选择的技能包；普通会话为空。 */
+  skill_ids?: string[];
   brain: Brain;
   model: string;
   /** 权限档位：plan | ask | auto | full。空串＝旧会话＝full。 */

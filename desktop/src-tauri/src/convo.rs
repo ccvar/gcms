@@ -65,8 +65,11 @@ pub struct Conversation {
     pub conn_name: String,
     pub site_slug: String,
     pub site_name: String,
-    /// siteops | sitebuild | workspace | remote（article/free 为旧会话兼容值）
+    /// siteops | sitebuild | workspace | skill | remote（article/free 为旧会话兼容值）
     pub task_type: String,
+    /// skill 会话显式绑定的通用技能。普通会话保持为空，不会自动加载全部技能。
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
     pub brain: String,
     pub model: String,
     /// 权限档位：plan | ask | auto | full。空串＝旧会话＝full（保持 0.1.10）。
@@ -397,6 +400,7 @@ mod tests {
             site_slug: "s".into(),
             site_name: "".into(),
             task_type: "free".into(),
+            skill_ids: vec![],
             brain: "claude".into(),
             model: "sonnet".into(),
             perm_mode: "full".into(),

@@ -18,6 +18,7 @@ mod path_env;
 mod permit;
 mod pilot_console;
 mod scheduled;
+mod skills;
 mod ssh;
 mod static_server;
 mod tasks;
@@ -176,6 +177,7 @@ fn resolve_work_dir(conn: &pack::Connection, site_slug: &str) -> Result<String, 
 /// 自由对话运行时使用的合成连接 id。新会话的 Conversation.conn_id 记录侧栏创建位置，
 /// 不再写这个值；仅为运行隔离、附件解析和旧数据迁移保留。
 const WORKSPACE_CONNECTION_ID: &str = "__workspace__";
+const SKILL_CONNECTION_ID: &str = "__skills__";
 
 /// 自由对话不借用当前 GCMS/Cloudflare/SSH 连接：这个合成连接只负责给智能体一个 cwd，
 /// 不存在于 connections.json，也没有任何钥匙串凭据。
@@ -203,6 +205,13 @@ fn workspace_connection(work_dir: &str) -> pack::Connection {
         pack_version: String::new(),
         created_at: String::new(),
     }
+}
+
+fn skill_connection(work_dir: &str) -> pack::Connection {
+    let mut connection = workspace_connection(work_dir);
+    connection.id = SKILL_CONNECTION_ID.into();
+    connection.name = "技能".into();
+    connection
 }
 
 /// 自由对话的 cwd：用户选了文件夹就只使用该目录；未选择时创建每会话独立的空白目录。
@@ -237,6 +246,10 @@ fn conversation_runtime(
         let work_dir = resolve_workspace_dir(data_dir, &conv.id, &conv.workspace_dir)?;
         return Ok((workspace_connection(&work_dir), work_dir));
     }
+    if conv.task_type == "skill" {
+        let work_dir = resolve_workspace_dir(data_dir, &conv.id, "")?;
+        return Ok((skill_connection(&work_dir), work_dir));
+    }
     let conn = conns.get(&conv.conn_id)?;
     let work_dir = resolve_work_dir(&conn, &conv.site_slug)?;
     Ok((conn, work_dir))
@@ -253,9 +266,9 @@ fn attachment_runtime(
     // 新版 workspace 的 conn_id 是侧栏固定位置，不是运行连接；project 才是会话 id。
     // 先按 project 识别会话，可同时兼容旧版仍传 __workspace__ 的调用方。
     if let Some(conv) = state.convos.get(project) {
-        if conv.task_type == "workspace" {
+        if conv.task_type == "workspace" || conv.task_type == "skill" {
             if conn_id != WORKSPACE_CONNECTION_ID && conn_id != conv.conn_id {
-                return Err("自由对话归属不匹配".into());
+                return Err("本地对话归属不匹配".into());
             }
             let (conn, _) = conversation_runtime(&state.conns, &state.data_dir, &conv)?;
             return Ok((conn, String::new()));
@@ -1993,6 +2006,17 @@ async fn sftp_rename(
 ) -> Result<(), String> {
     ensure_ssh(&state, &conn_id).await?;
     state.ssh.rename(&conn_id, &from, &to).await
+}
+
+#[tauri::command]
+async fn sftp_copy(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    ensure_ssh(&state, &conn_id).await?;
+    state.ssh.copy_path(&conn_id, &from, &to).await
 }
 
 #[tauri::command]
@@ -4491,6 +4515,7 @@ fn set_conversation_brain_model(
         .get(&conv_id)
         .map(|c| {
             c.task_type == "workspace"
+                || c.task_type == "skill"
                 || state
                     .conns
                     .get(&c.conn_id)
@@ -6772,6 +6797,7 @@ async fn fire_task(
                 // 没有人在场确认，不能替用户产生这笔开销。
                 false,
                 String::new(),
+                vec![],
                 prompt.clone(),
                 sink,
                 data_dir.clone(),
@@ -6820,6 +6846,7 @@ async fn fire_task(
                         next_effort.clone(),
                         false, // 同上：限额回退仍是无人值守，不开 fast
                         String::new(),
+                        vec![],
                         prompt,
                         fallback_sink,
                         data_dir,
@@ -7384,6 +7411,7 @@ async fn create_conversation(
     // fast 模式（Opus 5 / Opus 4.8）。tauri 命令参数不吃 serde 属性，前端必须显式传。
     fast: bool,
     workspace_dir: String,
+    skill_ids: Vec<String>,
     message: String,
     on_event: Channel<agent::TurnEvent>,
     data_dir: PathBuf,
@@ -7397,20 +7425,35 @@ async fn create_conversation(
         String::new()
     };
     let is_workspace = task_type == "workspace";
+    let is_skill = task_type == "skill";
+    let is_local_workspace = is_workspace || is_skill;
+    if is_skill {
+        if skill_ids.len() != 1 {
+            return Err("技能对话必须选择一个技能包".into());
+        }
+        // 创建前即校验存在与启用状态，避免先落下一条注定无法运行的会话。
+        crate::skills::selected_skill_prompt(&data_dir, &skill_ids)?;
+    }
     // workspace 仍用隔离的合成连接运行，但侧栏归属固定为创建时的真实连接。
     let workspace_owner = if is_workspace {
         Some(conns.get(&conn_id)?)
     } else {
         None
     };
-    let work_dir = if is_workspace {
-        resolve_workspace_dir(&data_dir, &conv_id, &workspace_dir)?
+    let work_dir = if is_local_workspace {
+        resolve_workspace_dir(
+            &data_dir,
+            &conv_id,
+            if is_workspace { &workspace_dir } else { "" },
+        )?
     } else {
         let conn = conns.get(&conn_id)?;
         resolve_work_dir(&conn, site_slug.trim())?
     };
     let conn = if is_workspace {
         workspace_connection(&work_dir)
+    } else if is_skill {
+        skill_connection(&work_dir)
     } else {
         conns.get(&conn_id)?
     };
@@ -7420,8 +7463,8 @@ async fn create_conversation(
     // 若先看 task_type，会把它误当成平台级“创建新站”，甚至丢掉已有的多站清单。
     let (is_gcms_sitebuild, multi) =
         conversation_scope(&conn.kind, &task_type, &site_slug, site_slugs.len());
-    let sys = if is_workspace {
-        agent::workspace_system_prompt(!workspace_dir.trim().is_empty())
+    let sys = if is_local_workspace {
+        agent::workspace_system_prompt(is_workspace && !workspace_dir.trim().is_empty())
     } else if is_ssh {
         agent::ssh_system_prompt(
             &conn.ssh_user,
@@ -7444,7 +7487,7 @@ async fn create_conversation(
     };
     // 追加网页截图能力说明（shot.js 在启动时生成到 <data_dir>/tools/）。
     // ssh 会话不给：那是运维场景，截图帮不上忙，只是白占提示词。
-    let sys = if is_ssh || is_workspace {
+    let sys = if is_ssh || is_local_workspace {
         sys
     } else {
         let shot = data_dir.join("tools").join("shot.js");
@@ -7454,10 +7497,14 @@ async fn create_conversation(
         )
     };
     let sys = design_fallback(sys, is_cf, &brain, &data_dir);
-    let (stored_conn_id, stored_conn_name) = workspace_owner
-        .as_ref()
-        .map(|owner| (owner.id.clone(), owner.name.clone()))
-        .unwrap_or_else(|| (conn.id.clone(), conn.name.clone()));
+    let (stored_conn_id, stored_conn_name) = if is_skill {
+        (SKILL_CONNECTION_ID.into(), "技能".into())
+    } else {
+        workspace_owner
+            .as_ref()
+            .map(|owner| (owner.id.clone(), owner.name.clone()))
+            .unwrap_or_else(|| (conn.id.clone(), conn.name.clone()))
+    };
     let conv = Conversation {
         id: conv_id.clone(),
         conn_id: stored_conn_id,
@@ -7472,6 +7519,7 @@ async fn create_conversation(
             String::new()
         },
         task_type,
+        skill_ids: if is_skill { skill_ids.clone() } else { vec![] },
         brain: brain.clone(),
         model: model.clone(),
         perm_mode: perm_mode.clone(),
@@ -7498,6 +7546,7 @@ async fn create_conversation(
         perm_mode,
         effort,
         fast,
+        skill_ids,
         data_dir.clone(),
         ssh,
         session_seed,
@@ -7570,6 +7619,7 @@ fn conversation_target_ready(
     site_count: usize,
 ) -> bool {
     task_type == "workspace"
+        || task_type == "skill"
         || conn_kind == "ssh"
         || (conn_kind == "gcms" && task_type == "sitebuild")
         || !site_slug.trim().is_empty()
@@ -7590,6 +7640,7 @@ mod conversation_target_tests {
         assert!(!conversation_target_ready("cloudflare", "sitebuild", "", 0));
         assert!(conversation_target_ready("ssh", "remote", "", 0));
         assert!(conversation_target_ready("workspace", "workspace", "", 0));
+        assert!(conversation_target_ready("workspace", "skill", "", 0));
     }
 
     #[test]
@@ -7627,6 +7678,7 @@ async fn start_conversation(
     effort: String,
     fast: bool,
     workspace_dir: String,
+    skill_ids: Vec<String>,
     message: String,
     on_event: Channel<agent::TurnEvent>,
 ) -> Result<Conversation, String> {
@@ -7634,7 +7686,9 @@ async fn start_conversation(
         return Err("会话 id 缺失".into());
     }
     // 自由对话和 GCMS 新站建设都不要求已有站点；其它会话仍必须有明确目标。
-    let conn_kind = if task_type == "workspace" {
+    let conn_kind = if task_type == "skill" {
+        "workspace".to_string()
+    } else if task_type == "workspace" {
         // 运行环境虽然隔离，侧栏归属仍必须是一个真实、存在的创建位置。
         state.conns.get(&conn_id)?;
         "workspace".to_string()
@@ -7665,6 +7719,7 @@ async fn start_conversation(
         effort,
         fast,
         workspace_dir,
+        skill_ids,
         message,
         on_event,
         state.data_dir.clone(),
@@ -7752,6 +7807,7 @@ async fn send_message(
         conv.perm_mode.clone(),
         conv.effort.clone(),
         conv.fast,
+        conv.skill_ids.clone(),
         state.data_dir.clone(),
         state.ssh.clone(),
         conv.session_ref.clone(),
@@ -7797,6 +7853,7 @@ async fn retry_turn(
         conv.perm_mode.clone(),
         conv.effort.clone(),
         conv.fast,
+        conv.skill_ids.clone(),
         state.data_dir.clone(),
         state.ssh.clone(),
         conv.session_ref.clone(),
@@ -7849,6 +7906,7 @@ async fn run_fresh_turn(
     let is_cf = conn.kind == "cloudflare";
     let is_ssh = conn.kind == "ssh";
     let is_workspace = conv.task_type == "workspace";
+    let is_local_workspace = is_workspace || conv.task_type == "skill";
     let (is_gcms_sitebuild, multi) = conversation_scope(
         &conn.kind,
         &conv.task_type,
@@ -7856,8 +7914,8 @@ async fn run_fresh_turn(
         conv.site_slugs.len(),
     );
     // 与 create_conversation 的首轮系统提示保持同款（重建＝换个 session 从头讲一遍规矩）。
-    let sys = if is_workspace {
-        agent::workspace_system_prompt(!conv.workspace_dir.trim().is_empty())
+    let sys = if is_local_workspace {
+        agent::workspace_system_prompt(is_workspace && !conv.workspace_dir.trim().is_empty())
     } else if is_ssh {
         agent::ssh_system_prompt(
             &conn.ssh_user,
@@ -7879,7 +7937,7 @@ async fn run_fresh_turn(
     } else {
         agent::system_prompt(&conv.task_type, &conv.site_slug, &conv.site_name)
     };
-    let sys = if is_ssh || is_workspace {
+    let sys = if is_ssh || is_local_workspace {
         sys
     } else {
         let shot = state.data_dir.join("tools").join("shot.js");
@@ -7915,6 +7973,7 @@ async fn run_fresh_turn(
         conv.perm_mode.clone(),
         conv.effort.clone(),
         conv.fast,
+        conv.skill_ids.clone(),
         state.data_dir.clone(),
         state.ssh.clone(),
         session_seed,
@@ -8433,6 +8492,10 @@ pub fn run() {
             pilot_console::pilot_console_reconnect,
             pilot_console::pilot_console_set_default_site,
             import_pack,
+            skills::list_skills,
+            skills::inspect_skill_package,
+            skills::install_skill_package,
+            skills::set_skill_enabled,
             check_pack_update,
             gcms_control_unlock,
             gcms_public_access_check,
@@ -8516,6 +8579,7 @@ pub fn run() {
             sftp_read,
             sftp_write,
             sftp_rename,
+            sftp_copy,
             sftp_remove,
             sftp_mkdir,
             sftp_download,

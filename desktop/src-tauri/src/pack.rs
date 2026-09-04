@@ -329,21 +329,38 @@ impl ConnStore {
             } else {
                 return Err("访问密钥前缀不是 gcmsp_/gcms_，无法识别".to_string());
             };
-            // 同地址 + 同密钥前缀 = 同一连接 → 就地升级技能文件（不再报错逼用户删连接丢对话）。
+            // 同地址 + 同密钥前缀一定是同一连接；同地址只有一个连接时，即使前缀
+            // 变化也按密钥轮换处理。这样后台重建平台密钥后重新导入，会原地更新
+            // 钥匙串和连接摘要，而不是新建连接、把历史会话留在旧连接下。
             let prefix = keychain::key_prefix(&api_key);
-            if let Some(mut dup) = self
-                .list()
-                .into_iter()
-                .find(|c| c.api_base == api_base && c.key_prefix == prefix)
-            {
+            let mut conns = self.list();
+            let exact = conns
+                .iter()
+                .position(|c| c.api_base == api_base && c.key_prefix == prefix);
+            let same_base: Vec<usize> = conns
+                .iter()
+                .enumerate()
+                .filter_map(|(index, c)| {
+                    (c.kind == "gcms" && c.api_base == api_base).then_some(index)
+                })
+                .collect();
+            let target = exact.or_else(|| (same_base.len() == 1).then_some(same_base[0]));
+            if let Some(target) = target {
+                let dup = &mut conns[target];
+                keychain::set_key(&dup.id, &api_key)?;
                 overlay_skill_dir(&skill_dir, Path::new(&dup.skill_dir))?;
+                dup.key_prefix = prefix;
+                dup.key_kind = key_kind.to_string();
                 // 新包（v1.3.10+）带 PACK_VERSION 标记：升级后落版本，避免「有更新」徽标误报纠缠。
                 let v = read_pack_version(Path::new(&dup.skill_dir));
-                if !v.is_empty() && v != dup.pack_version {
+                if !v.is_empty() {
                     dup.pack_version = v;
-                    self.set_pack_version(&dup.id, &dup.pack_version)?;
                 }
-                return Ok(ImportOutcome::Upgraded { connection: dup });
+                let upgraded = dup.clone();
+                self.save(&conns)?;
+                return Ok(ImportOutcome::Upgraded {
+                    connection: upgraded,
+                });
             }
 
             // 剥离：Keychain 收 key，.env 只留 base。
@@ -728,10 +745,15 @@ impl ConnStore {
         if old.kind != "ssh" {
             return Err("这不是远程连接".into());
         }
+        // 先确认旧凭据是否真的还在。仅凭“以前也是密码认证”不能允许空保存：迁移失败
+        // 正是连接记录仍在、钥匙串条目已丢的状态，继续空保存只会制造假成功。
+        let old_secret = keychain::get_key(id).ok();
         match auth {
             "key" if key_path.is_empty() => return Err("请选择私钥文件".into()),
-            "password" if secret.is_empty() && old.ssh_auth != "password" => {
-                return Err("换成密码登录时必须填密码".into())
+            "password"
+                if secret.is_empty() && (old.ssh_auth != "password" || old_secret.is_none()) =>
+            {
+                return Err("钥匙串里没有这个连接的密码，请补录密码".into())
             }
             "key" | "password" => {}
             other => return Err(format!("未知认证方式: {other}")),
@@ -749,8 +771,7 @@ impl ConnStore {
                 dup.name
             ));
         }
-        // 动钥匙串前先把旧值抄下来：存盘要是失败了，得原样放回去（无口令私钥本就没有条目 → None）。
-        let old_secret = keychain::get_key(id).ok();
+        // 动钥匙串前已把旧值抄下来：存盘要是失败了，得原样放回去（无口令私钥本就没有条目 → None）。
         // 钥匙串先写：写失败就整个中止（连接还是原样，可重试），别让记录和密钥对不上。
         if !secret.is_empty() {
             keychain::set_key(id, secret)?;
@@ -1512,7 +1533,7 @@ mod tests {
         let err = err_of(store.update_ssh(
             "c1", "", "9.9.9.9", 2222, "root", "password", "", "", "SHA256:x",
         ));
-        assert!(err.contains("必须填密码"), "{err}");
+        assert!(err.contains("补录密码"), "{err}");
         // 非 ssh 连接 → 拒
         assert!(store
             .update_ssh("g1", "x", "h", 22, "u", "key", "/k", "", "SHA256:x")

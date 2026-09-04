@@ -765,6 +765,7 @@ async fn execute_task(app: AppHandle, binding: ConsoleBinding, task: RemoteTask,
         effort,
         false, // 控制台任务无人值守：fast 单独计费，不自动开
         String::new(),
+        vec![],
         task.prompt.clone(),
         channel,
         state.data_dir.clone(),

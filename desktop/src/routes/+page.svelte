@@ -13,6 +13,7 @@
   import BrainIcon from '$lib/BrainIcon.svelte';
   import SiteMark from '$lib/SiteMark.svelte';
   import SiteFav from '$lib/SiteFav.svelte';
+  import SkillFav from '$lib/SkillFav.svelte';
   import ModelFx from '$lib/ModelFx.svelte';
   import UsageRing from '$lib/UsageRing.svelte';
   import { hideTip, showTipFor, tip as tipAction } from '$lib/tip';
@@ -92,6 +93,7 @@
     setup: { id: 'connection-settings', defaultWidth: 400, minWidth: 360, maxWidth: 720, label: '调整连接与模型面板宽度' },
     updateCenter: { id: 'update-center', defaultWidth: 540, minWidth: 440, maxWidth: 900, label: '调整更新中心面板宽度' },
     transfer: { id: 'configuration-transfer', defaultWidth: 480, minWidth: 420, maxWidth: 900, label: '调整导入导出面板宽度' },
+    skillImport: { id: 'skill-import', defaultWidth: 480, minWidth: 420, maxWidth: 760, label: '调整技能包导入面板宽度' },
     gcmsInstall: { id: 'gcms-install', defaultWidth: 400, minWidth: 360, maxWidth: 900, label: '调整 GCMS 安装面板宽度' },
     gcmsMigration: { id: 'gcms-migration', defaultWidth: 400, minWidth: 400, maxWidth: 1000, label: '调整 GCMS 迁移面板宽度' },
   } satisfies Record<string, SheetWidthOptions>;
@@ -551,14 +553,16 @@
     gcmsMigrationPreflight = null;
   }
 
-  async function loadGcmsMigrationInstances() {
+  async function loadGcmsMigrationInstances(refreshRemote = true) {
     if (gcmsMigrationInstancesLoading) return;
     gcmsMigrationInstancesLoading = true;
     try {
-      const instances = await invoke<GcmsMigrationSnapshot[]>('gcms_remote_migration_instances');
+      const instances = await invoke<GcmsMigrationSnapshot[]>('gcms_remote_migration_instances', { refreshRemote });
       gcmsMigrationInstances = instances;
-      const pending = instances.filter(gcmsMigrationAccessNeedsRefresh);
-      if (pending.length) void refreshGcmsMigrationAccessHealthBatch(pending);
+      if (refreshRemote) {
+        const pending = instances.filter(gcmsMigrationAccessNeedsRefresh);
+        if (pending.length) void refreshGcmsMigrationAccessHealthBatch(pending);
+      }
     } catch (e) {
       gcmsMigrationError = String(e);
     } finally {
@@ -876,18 +880,18 @@
   function gcmsAssistantImportTip(status: GcmsRemoteStatus, imported: boolean): string {
     if (!status.running) return '请先启动 GCMS 服务';
     if (!gcmsHttpsConfigured(status)) return imported
-      ? '访问域名不可用；已导入记录会保留，修复后可继续同步'
+      ? '访问域名不可用；已有连接记录会保留，修复后可继续同步'
       : '请先设置访问域名并启用 HTTPS';
-    if (!status.assistant_import_supported) return '请先升级 GCMS，再导入 Pilot 运营助手';
+    if (!status.assistant_import_supported) return '请先升级 GCMS，再连接 Pilot 运营助手';
     return imported
       ? '同步最新技能包与全站运营权限；已有对话会保留'
-      : '创建全站运营密钥并导入当前 Pilot；密钥只保存在系统钥匙串';
+      : '创建全站运营密钥并连接到当前 Pilot；密钥只保存在系统钥匙串';
   }
   async function importGcmsPilotAssistant(c: Connection, status: GcmsRemoteStatus) {
     if (gcmsAssistantImporting[c.id]) return;
-    if (!status.running) { say('请先启动 GCMS 服务，再导入 Pilot 运营助手', 'err'); return; }
-    if (!gcmsHttpsConfigured(status)) { say('请先设置访问域名并启用 HTTPS，再导入 Pilot 运营助手', 'err'); return; }
-    if (!status.assistant_import_supported) { say('当前 GCMS 版本尚不支持一键导入，请先升级 GCMS', 'err'); return; }
+    if (!status.running) { say('请先启动 GCMS 服务，再连接 Pilot 运营助手', 'err'); return; }
+    if (!gcmsHttpsConfigured(status)) { say('请先设置访问域名并启用 HTTPS，再连接 Pilot 运营助手', 'err'); return; }
+    if (!status.assistant_import_supported) { say('当前 GCMS 版本尚不支持 Pilot 助手连接，请先升级 GCMS', 'err'); return; }
     const existed = !!gcmsPilotAssistant(c.id);
     gcmsAssistantImporting = { ...gcmsAssistantImporting, [c.id]: true };
     try {
@@ -899,7 +903,7 @@
       const assistantName = connectionDisplayName(outcome.connection);
       say(existed || outcome.status === 'upgraded'
         ? `「${assistantName}」已更新，原有对话全部保留`
-        : `「${assistantName}」已导入当前 Pilot`);
+        : `「${assistantName}」已连接到当前 Pilot`);
     } catch (e) {
       say(String(e), 'err');
     } finally {
@@ -2115,17 +2119,21 @@
     }
   }
   async function refreshGcmsServers() {
-    await Promise.all([
-      ...sshServers.map((c) => probeRemoteGcms(c.id)),
-      loadGcmsMigrationInstances(),
-    ]);
+    // macOS 钥匙串的旧连接凭据可能仍需逐条迁移。串行检测可避免多个系统授权框
+    // 同时堆叠；统一保险库加载后，后续服务器会直接复用进程内缓存。
+    for (const server of sshServers) {
+      await probeRemoteGcms(server.id);
+    }
+    await loadGcmsMigrationInstances();
   }
   function openGcmsInstaller() {
     switcherOpen = false;
     setupAddOpen = false;
     setupOpen = false;
     gcmsInstallOpen = true;
-    void refreshGcmsServers();
+    // 打开管理页只展示当前缓存。远程检测会读取 SSH 凭据，必须由用户点单台检测
+    // 或右上角“检测全部”明确触发，不能因为查看页面就连续唤起系统钥匙串。
+    void loadGcmsMigrationInstances(false);
   }
   function openConnectionSetup(event?: MouseEvent) {
     event?.preventDefault();
@@ -4486,7 +4494,7 @@
       if (viewBusy) say(p === 'full' ? '已切全自动：本轮剩余操作不再弹卡' : '权限档位已收紧，从下一轮开始生效（正在跑的这轮拦不回来）');
     } catch (e) { say(String(e), 'err'); }
   }
-  let view = $state<'launcher' | 'thread' | 'sites' | 'schedule' | 'tasks' | 'managed' | 'templates' | 'prompts' | 'remote'>('launcher');
+  let view = $state<'launcher' | 'thread' | 'sites' | 'schedule' | 'tasks' | 'managed' | 'templates' | 'prompts' | 'remote' | 'skills' | 'skillchat'>('launcher');
 
   async function openSites() {
     if (activeConn?.kind !== 'gcms') return;
@@ -4787,7 +4795,9 @@
 ③ 建议先在 L1/L2 稳定运行满 2 周、打回率低后再升 L3。
 改动均会留修订历史；每周查看周报的「观察名单」跟踪数据回落。`;
   function modelDisp(brain: string, model: string): string { return launcherModelOpts(brain).find((o) => o.value === model)?.label ?? (model || '默认'); }
-  function effortDisp(e: string): string { return e === 'low' ? '低' : e === 'medium' ? '中' : e === 'high' ? '高' : ''; }
+  function effortDisp(e: string): string {
+    return e === 'none' ? '无' : e === 'minimal' ? '极低' : e === 'low' ? '低' : e === 'medium' ? '中' : e === 'high' ? '高' : e === 'xhigh' ? '极高' : e === 'max' ? '最高' : e === 'ultra' ? '极致' : '';
+  }
   function mdTok(n: number): string { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
   async function changeManagedModels(m: ManagedSite, value?: string, effort?: string) {
     let brain = m.brain;
@@ -5232,7 +5242,7 @@
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId: activeConnId, siteSlug: mwSite, siteName: site?.name || mwSite,
         siteSlugs: [], siteNames: [], taskType: 'free', brain: mwBrain, model: mwModel,
-        permMode: 'auto', effort: mwEffort, fast: false, workspaceDir: '', message: MW_PLAN_PROMPT, onEvent: makeChannel(id),
+        permMode: 'auto', effort: mwEffort, fast: false, workspaceDir: '', skillIds: [], message: MW_PLAN_PROMPT, onEvent: makeChannel(id),
       });
       const last = [...conv.messages].reverse().find((x) => x.role === 'assistant' && !x.error && x.text.trim());
       if (last) mwPlan = last.text.trim();
@@ -5540,8 +5550,8 @@
   const isCfConn = $derived(activeConn?.kind === 'cloudflare');
   let cfProjects = $state<string[]>([]);
   // 自由对话的 conn_id 只表示侧栏创建位置，绝不能把该连接当成运行上下文。
-  const activeConvIsCf = $derived(!!activeConv && activeConv.task_type !== 'workspace' && conns.find((c) => c.id === activeConv!.conn_id)?.kind === 'cloudflare');
-  const activeConvConn = $derived(activeConv && activeConv.task_type !== 'workspace' ? (conns.find((c) => c.id === activeConv!.conn_id) ?? null) : null);
+  const activeConvIsCf = $derived(!!activeConv && activeConv.task_type !== 'workspace' && activeConv.task_type !== 'skill' && conns.find((c) => c.id === activeConv!.conn_id)?.kind === 'cloudflare');
+  const activeConvConn = $derived(activeConv && activeConv.task_type !== 'workspace' && activeConv.task_type !== 'skill' ? (conns.find((c) => c.id === activeConv!.conn_id) ?? null) : null);
   const activeConvIsSsh = $derived(activeConvConn?.kind === 'ssh');
   const activeConvIsWorkspace = $derived(activeConv?.task_type === 'workspace');
   let previewBusy = $state(false);
@@ -6295,7 +6305,7 @@
     }
     return rows;
   }
-  // 会话大小/用量：上下文按「厂商 + 模型」估算——codex 272k；grok-4.5 500k（ACP initialize
+  // 会话大小/用量：上下文按「厂商 + 模型」估算——codex 272k；Grok 4.5 / 4.6 500k（ACP initialize
   // 的 totalContextTokens 实测值）。Claude 当前 Sonnet / Opus / Fable 是 1M；
   // Haiku 4.5 仍是 200k。旧版或无法识别的自定义 Claude ID 保守按 200k。
   //
@@ -7428,11 +7438,13 @@
   }
   async function runUpdate() { await installPilotUpdate({ confirm: true, notify: true }); }
 
-  // 主窗口启动后汇总检查三类更新，之后每 6 小时刷新同一份更新快照。
+  // 启动时只检查 Pilot 自身更新。远程 GCMS / 技能包检查需要读取各连接凭据，若在
+  // 启动后批量执行会触发一串 macOS 钥匙串授权框；这些检查改为用户打开更新中心、
+  // GCMS 管理页或手动刷新时再运行。
   $effect(() => {
     if (!isMainWindow) return;
-    const initial = setTimeout(() => { void checkAllUpdates(true); }, 5000);
-    const periodic = setInterval(() => { void checkAllUpdates(true); }, 6 * 60 * 60 * 1000);
+    const initial = setTimeout(() => { void checkPilotUpdate(true); }, 5000);
+    const periodic = setInterval(() => { void checkPilotUpdate(true); }, 6 * 60 * 60 * 1000);
     return () => { clearTimeout(initial); clearInterval(periodic); };
   });
   async function refreshConvos() { try { convos = await invoke('list_conversations'); } catch (e) { say(String(e), 'err'); } }
@@ -7598,16 +7610,17 @@
   let selSeq = 0;
   async function selectConn(id: string, authoritativeSitebuild?: Conversation | null, refreshStats = false) {
     const switching = id !== activeConnId;
+    const leavingSkillWorkspace = inSkillWorkspace;
     const conn = conns.find((c) => c.id === id);
     const seq = ++selSeq; activeConnId = id; discovery = null;
     void maybeCheckPackUpdate(id); // 静默查技能包更新（24h 节流，不阻塞选择）
-    if (switching) {
+    if (switching || leavingSkillWorkspace) {
       // 换连接＝换工作区：关掉上个连接的对话/排期/定时任务视图，别串场。
       // 模板库 / 提示词库只在 CF 连接下有；切到 gcms 时也退回启动页。
       activeConvId = ''; activeConv = null;
       dashboardSiteFilter = '';
       taskModalOpen = false; taskHistoryFor = null; hlTaskIds = [];
-      if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || view === 'remote'
+      if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || view === 'remote' || view === 'skills' || view === 'skillchat'
         || (view === 'sites' && conn?.kind !== 'gcms')
         || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
     }
@@ -7615,7 +7628,7 @@
       // SSH 连接没有站点/项目可发现，也没有独立的启动页/对话页——**一切都在远程工作台里**
       //（终端为主，底部对话、右侧文件按需开）。
       void probeOs(id); // 系统版本：没探过才连，探到就存着，之后一直是本地读
-      view = 'remote';
+      if (view !== 'skills') view = 'remote';
       if (switching) {
         disposeTerm();
         // 远程连接绝不默认「全自动」：那是别人的真机，默认得让每条命令都过一次你的眼。
@@ -7763,6 +7776,231 @@
     const k = keyVal.trim(); if (!k) return;
     if (!k.startsWith('gcmsp_') && !k.startsWith('gcms_')) { keyErr = '密钥前缀应为 gcmsp_ 或 gcms_'; return; }
     keyErr = ''; await doImport(keyZip, k);
+  }
+
+  // ---------- 通用技能 ----------
+  type InstalledSkill = {
+    id: string;
+    name: string;
+    description: string;
+    site_domain: string;
+    version: string;
+    install_dir: string;
+    enabled: boolean;
+    has_scripts: boolean;
+    imported_at: string;
+    sha256: string;
+  };
+  type SkillPackageInspection = {
+    id: string;
+    name: string;
+    description: string;
+    site_domain: string;
+    version: string;
+    has_scripts: boolean;
+    file_count: number;
+    unpacked_bytes: number;
+    sha256: string;
+    already_installed: boolean;
+    installed_sha256: string;
+  };
+  type SkillInstallOutcome = {
+    status: 'installed' | 'updated' | 'unchanged';
+    skill: InstalledSkill;
+  };
+
+  let installedSkills = $state<InstalledSkill[]>([]);
+  let skillsLoading = $state(false);
+  let skillsError = $state('');
+  let skillToggleBusy = $state<Record<string, boolean>>({});
+  let skillImportOpen = $state(false);
+  let skillImportMenuOpen = $state(false);
+  let skillImportKind = $state<'folder' | 'zip'>('folder');
+  let skillImportPath = $state('');
+  let skillInspecting = $state(false);
+  let skillInstalling = $state(false);
+  let skillInspection = $state<SkillPackageInspection | null>(null);
+  let skillImportError = $state('');
+  let skillFilter = $state<'all' | 'enabled' | 'disabled'>('all');
+  const SKILLS_CONN_ID = '__skills__';
+  let lSkillId = $state('');
+  const filteredSkills = $derived(installedSkills.filter((skill) =>
+    skillFilter === 'all' || (skillFilter === 'enabled' ? skill.enabled : !skill.enabled),
+  ));
+  const enabledSkills = $derived(installedSkills.filter((skill) => skill.enabled));
+  const selectedLaunchSkill = $derived(enabledSkills.find((skill) => skill.id === lSkillId) ?? null);
+  const skillChatOptions = $derived(enabledSkills.map((skill) => ({
+    value: skill.id,
+    label: skill.name,
+    sub: [skill.site_domain, skillVersion(skill.version)].filter(Boolean).join(' · '),
+    tip: skill.description || '这个技能没有提供说明。',
+  })));
+  const activeConvIsSkill = $derived(activeConv?.task_type === 'skill');
+  const activeConversationSkill = $derived.by(() => {
+    if (!activeConv || activeConv.task_type !== 'skill') return null;
+    const id = activeConv.skill_ids?.[0] || activeConv.site_slug;
+    return installedSkills.find((skill) => skill.id === id) ?? null;
+  });
+
+  function skillVersion(version: string): string {
+    const value = version.trim();
+    if (!value) return '未标注版本';
+    return /^[vV]/.test(value) ? value : `v${value}`;
+  }
+  function compactDigest(value: string): string {
+    const digest = value.trim();
+    return digest.length > 16 ? `${digest.slice(0, 12)}…${digest.slice(-4)}` : digest || '—';
+  }
+  function formatSkillBytes(value: number): string {
+    if (!Number.isFinite(value) || value <= 0) return '0 B';
+    if (value < 1024) return `${Math.round(value)} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+    return `${(value / 1024 / 1024).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  }
+  function skillPackageName(path: string): string {
+    return path.split(/[\\/]/).filter(Boolean).pop() || path;
+  }
+  function sameInstalledSkill(inspection: SkillPackageInspection): boolean {
+    return inspection.already_installed
+      && !!inspection.installed_sha256
+      && inspection.installed_sha256 === inspection.sha256;
+  }
+  async function loadSkills(feedback = false) {
+    if (skillsLoading) return;
+    skillsLoading = true;
+    skillsError = '';
+    try {
+      const result = await invoke<InstalledSkill[]>('list_skills');
+      installedSkills = result.slice().sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+      if (feedback) say(installedSkills.length ? `已刷新 ${installedSkills.length} 个技能` : '技能列表已刷新');
+    } catch (e) {
+      skillsError = String(e);
+      if (feedback) say(skillsError, 'err');
+    } finally {
+      skillsLoading = false;
+    }
+  }
+  function openSkills() {
+    switcherOpen = false;
+    setupAddOpen = false;
+    setupOpen = false;
+    gcmsInstallOpen = false;
+    activeConvId = '';
+    activeConv = null;
+    lSkillId = '';
+    view = 'skillchat';
+    void loadSkills();
+  }
+  function openSkillLibrary() {
+    switcherOpen = false;
+    skillFilter = 'all';
+    view = 'skills';
+    void loadSkills();
+  }
+  function newSkillChat() {
+    activeConvId = '';
+    activeConv = null;
+    lSkillId = '';
+    lDraft = '';
+    attachments = [];
+    queued = null;
+    view = 'skillchat';
+    if (!installedSkills.length && !skillsLoading) void loadSkills();
+  }
+  function closeSkillImport() {
+    if (skillInspecting || skillInstalling) return;
+    skillImportOpen = false;
+    skillImportPath = '';
+    skillInspection = null;
+    skillImportError = '';
+  }
+  $effect(() => {
+    if (!skillImportMenuOpen) return;
+    const close = () => (skillImportMenuOpen = false);
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') skillImportMenuOpen = false; };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  });
+  function toggleSkillImportMenu(event: MouseEvent) {
+    event.stopPropagation();
+    if (skillInspecting || skillInstalling) return;
+    skillImportMenuOpen = !skillImportMenuOpen;
+  }
+  async function chooseSkillPackage(kind: 'folder' | 'zip' = 'folder') {
+    if (skillInspecting || skillInstalling) return;
+    skillImportMenuOpen = false;
+    const picked = kind === 'folder'
+      ? await open({ title: '选择技能文件夹', multiple: false, directory: true })
+      : await open({
+          title: '选择 ZIP 技能包',
+          multiple: false,
+          filters: [{ name: 'Pilot 技能包', extensions: ['zip'] }],
+        });
+    if (typeof picked !== 'string' || !picked) return;
+    skillImportKind = kind;
+    skillImportPath = picked;
+    skillInspection = null;
+    skillImportError = '';
+    skillImportOpen = true;
+    skillInspecting = true;
+    try {
+      skillInspection = await invoke<SkillPackageInspection>('inspect_skill_package', { sourcePath: picked });
+    } catch (e) {
+      skillImportError = String(e);
+    } finally {
+      skillInspecting = false;
+    }
+  }
+  async function installSkillPackage() {
+    const inspection = skillInspection;
+    if (!inspection || !skillImportPath || skillInstalling || sameInstalledSkill(inspection)) return;
+    if (inspection.already_installed) {
+      const confirmed = await confirmDialog(
+        `已安装「${inspection.name}」。更新会替换技能包文件，当前启用状态会保留。`,
+        { title: '更新技能', kind: 'warning', confirmText: '确认更新' },
+      );
+      if (!confirmed) return;
+    }
+    skillInstalling = true;
+    skillImportError = '';
+    try {
+      const outcome = await invoke<SkillInstallOutcome>('install_skill_package', {
+        sourcePath: skillImportPath,
+        expectedSha256: inspection.sha256,
+      });
+      await loadSkills();
+      skillImportOpen = false;
+      skillImportPath = '';
+      skillInspection = null;
+      say(outcome.status === 'updated'
+        ? `「${outcome.skill.name}」已更新`
+        : outcome.status === 'unchanged'
+          ? `「${outcome.skill.name}」已是当前版本`
+          : `「${outcome.skill.name}」已导入并启用`);
+    } catch (e) {
+      skillImportError = String(e);
+    } finally {
+      skillInstalling = false;
+    }
+  }
+  async function toggleInstalledSkill(skill: InstalledSkill) {
+    if (skillToggleBusy[skill.id]) return;
+    skillToggleBusy = { ...skillToggleBusy, [skill.id]: true };
+    try {
+      const updated = await invoke<InstalledSkill>('set_skill_enabled', { skillId: skill.id, enabled: !skill.enabled });
+      installedSkills = installedSkills.map((item) => item.id === updated.id ? updated : item);
+      say(`「${updated.name}」已${updated.enabled ? '启用' : '停用'}`);
+    } catch (e) {
+      say(String(e), 'err');
+    } finally {
+      const next = { ...skillToggleBusy };
+      delete next[skill.id];
+      skillToggleBusy = next;
+    }
   }
 
   // ---------- 技能包更新（徽标 + 一键升级） ----------
@@ -8151,6 +8389,7 @@
   let sshErr = $state('');
   let sshFp = $state(''); // 试连拿到的主机指纹；非空 = 认证已通过、待你确认指纹
   let sshEditId = $state(''); // 非空 = 编辑已有连接
+  let sshCredentialRepair = $state(false); // 从“凭据缺失”入口进入：必须补填，不能空保存
   let sshOldFp = $state(''); // 编辑时：连接里存着的旧指纹，用来发现「机器的指纹变了」
   const SSH_BLANK = { name: '', host: '', port: 22, user: '', auth: 'password', password: '', keyPath: '', keyPass: '' };
   let sshF = $state({ ...SSH_BLANK });
@@ -8160,18 +8399,22 @@
     { value: 'key', label: '密钥', sub: '用私钥文件登录（更安全）' },
   ];
   function openSshConnect() {
-    sshOpen = true; sshErr = ''; sshFp = ''; sshEditId = ''; sshOldFp = '';
+    sshOpen = true; sshErr = ''; sshFp = ''; sshEditId = ''; sshCredentialRepair = false; sshOldFp = '';
     sshF = { ...SSH_BLANK };
     sshF0 = { ...SSH_BLANK };
   }
   function openSshEdit(c: Connection) {
-    sshOpen = true; sshErr = ''; sshFp = ''; sshEditId = c.id; sshOldFp = c.ssh_fingerprint || '';
+    sshOpen = true; sshErr = ''; sshFp = ''; sshEditId = c.id; sshCredentialRepair = false; sshOldFp = c.ssh_fingerprint || '';
     // 密码/口令不回显（我们自己也读不到明文以外的用途）——留空即保持钥匙串里那条不变。
     sshF = {
       name: c.name, host: c.ssh_host ?? '', port: c.ssh_port || 22, user: c.ssh_user ?? '',
       auth: c.ssh_auth || 'password', password: '', keyPath: c.ssh_key_path ?? '', keyPass: '',
     };
     sshF0 = { ...sshF };
+  }
+  function openSshCredentialRepair(c: Connection) {
+    openSshEdit(c);
+    sshCredentialRepair = true;
   }
   // 改了连接相关的字段（地址/端口/用户/认证方式/密钥路径/新密码）→ 必须重新试连拿指纹再存。
   // 只改名字则不必：那和「能不能连上」无关，别为了改个名逼用户去连一次机器。
@@ -8180,11 +8423,15 @@
     sshF.user.trim() !== sshF0.user || sshF.auth !== sshF0.auth ||
     sshF.keyPath.trim() !== sshF0.keyPath || !!sshF.password || !!sshF.keyPass
   );
-  const sshRenameOnly = $derived(!!sshEditId && !sshDirty);
+  const sshRenameOnly = $derived(!!sshEditId && !sshDirty && !sshCredentialRepair);
   // 试连看到的指纹和存着的不一样 = 这台机器换了主机密钥（重装？也可能是中间人）——必须让人看见。
   const sshFpChanged = $derived(!!sshEditId && !!sshFp && !!sshOldFp && sshFp !== sshOldFp);
   async function saveSshEdit() {
     if (sshConnecting) return;
+    if (sshCredentialRepair && sshF.auth === 'password' && !sshF.password) {
+      sshErr = '请输入这条连接的密码，并先测试连接。';
+      return;
+    }
     sshConnecting = true; sshErr = '';
     try {
       const conn = await invoke<Connection>('update_ssh', {
@@ -8198,7 +8445,14 @@
       });
       sshOpen = false; say(`已更新「${conn.name}」`);
       await refreshConns();
-      if (activeConnId === conn.id) { disposeTerm(); void probeOs(conn.id); }
+      if (activeConnId === conn.id) {
+        disposeTerm();
+        void probeOs(conn.id);
+        // 补录凭据后原地恢复工作台，不要求用户再点终端和文件区的刷新按钮。
+        await tick();
+        if (view === 'remote' && wb.term && termEl) void startTerm(conn.id, termEl);
+        if (view === 'remote' && wb.files && sftpConnId === conn.id) void sftpGo(sftpPath);
+      }
     } catch (e) { sshErr = String(e); }
     finally { sshConnecting = false; }
   }
@@ -8211,7 +8465,7 @@
   // 编辑时密码可以留空（＝沿用钥匙串里那条），新建时必须填。
   const sshCanTest = $derived(
     !!sshF.host.trim() && !!sshF.user.trim() &&
-    (sshF.auth === 'key' ? !!sshF.keyPath.trim() : (!!sshF.password || (!!sshEditId && sshF0.auth === 'password')))
+    (sshF.auth === 'key' ? !!sshF.keyPath.trim() : (!!sshF.password || (!!sshEditId && !sshCredentialRepair && sshF0.auth === 'password')))
   );
   async function testSsh() {
     if (sshTesting || !sshCanTest) return;
@@ -8799,6 +9053,7 @@
   let termEl = $state<HTMLDivElement | null>(null);
   let termOn = $state(false);
   let termBusy = $state(false); // 建连中：刷新键转起来 + 禁重复点
+  let termErr = $state('');
   let term: import('@xterm/xterm').Terminal | null = null;
   let termFit: import('@xterm/addon-fit').FitAddon | null = null;
   let termConnId = '';
@@ -8868,6 +9123,15 @@
     for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
     return a;
   }
+  function bytesToB64(bytes: Uint8Array): string {
+    let bin = '';
+    // 避免把大数组一次性 spread 进 fromCharCode，超过 JS 参数上限会直接抛错。
+    for (let start = 0; start < bytes.length; start += 0x8000) {
+      const end = Math.min(start + 0x8000, bytes.length);
+      for (let i = start; i < end; i++) bin += String.fromCharCode(bytes[i]);
+    }
+    return btoa(bin);
+  }
   function strToB64(s: string): string {
     let bin = '';
     for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
@@ -8875,7 +9139,7 @@
   }
   function disposeTerm() {
     if (term) { try { term.dispose(); } catch { /* */ } }
-    term = null; termFit = null; termOn = false; termBusy = false; termConnId = '';
+    term = null; termFit = null; termOn = false; termBusy = false; termErr = ''; termConnId = '';
   }
   // 终端容器一变大小就重排：开关面板、拖面板边、拉窗口——一个 ResizeObserver 全包了，
   // 不用在每个改布局的地方各记一次 fit()（漏一个就是花屏）。
@@ -8891,6 +9155,20 @@
     ro.observe(el);
     return () => { cancelAnimationFrame(raf); ro.disconnect(); };
   });
+  // WKWebView 有时会在 xterm 的自定义按键处理器之前吞掉 Escape。直接在终端容器的
+  // capture 阶段截获并写入 PTY，保证 vi/vim 的“退出插入模式”不依赖 WebView 默认行为。
+  $effect(() => {
+    const el = termEl;
+    if (!el) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if ((event.key !== 'Escape' && event.key !== 'Esc' && event.keyCode !== 27) || !termOn || !termConnId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void invoke('ssh_input', { connId: termConnId, b64: strToB64('\x1b') });
+    };
+    el.addEventListener('keydown', onEscape, true);
+    return () => el.removeEventListener('keydown', onEscape, true);
+  });
   // 进 remote 视图且容器就位 → 起终端；切走/换连接由 $effect 的清理拆掉。
   $effect(() => {
     const id = activeConnId;
@@ -8903,6 +9181,7 @@
     disposeTerm();
     termConnId = id;
     termBusy = true;
+    termErr = '';
     // xterm 要 DOM，动态 import（SSR 关着，但仍别在模块顶层拉进来）。
     const [{ Terminal }, { FitAddon }] = await Promise.all([
       import('@xterm/xterm'),
@@ -8979,7 +9258,8 @@
       await invoke('ssh_open_shell', { connId: id, cols: t.cols, rows: t.rows, onEvent: ch });
       termOn = true;
     } catch (e) {
-      t.write(`\r\n\x1b[31m${String(e)}\x1b[0m\r\n`);
+      termErr = String(e);
+      t.write(`\r\n\x1b[31m${termErr}\x1b[0m\r\n`);
     } finally {
       if (term === t) termBusy = false; // 已被换掉的旧终端别去动当前状态
     }
@@ -8996,7 +9276,7 @@
   // 视图＝可展开的树：sftpPath 是树根，每个目录的孩子按需加载后缓存在 sftpKids 里。
   type SftpEntry = { name: string; dir: boolean; link: boolean; perms: string; size: number; mtime: number };
   type SftpRow = SftpEntry & { path: string; depth: number };
-  let sftpConnId = ''; // 已加载文件列表所属的连接；换连接才重置，切页签不重置
+  let sftpConnId = $state(''); // 已加载文件列表所属的连接；换连接才重置，切页签不重置
   let sftpPath = $state('');
   let sftpPathDraft = $state('');
   let sftpKids = $state<Record<string, SftpEntry[]>>({}); // 目录路径 → 它的孩子
@@ -9006,7 +9286,19 @@
   let sftpSort = $state<{ key: 'name' | 'size' | 'mtime'; asc: boolean }>({ key: 'name', asc: true });
   let sftpBusy = $state(false);
   let sftpErr = $state('');
+  function missingSshCredential(error: string): boolean {
+    return error.includes('钥匙串里没有这个连接的密码');
+  }
+  function repairActiveSshCredential() {
+    if (activeConn?.kind === 'ssh') openSshCredentialRepair(activeConn);
+  }
+  function retryOrRepairSftp() {
+    if (missingSshCredential(sftpErr)) repairActiveSshCredential();
+    else void sftpGo(sftpPath);
+  }
   let sftpXfer = $state(''); // 上传/下载进行中的提示文案
+  let sftpFileOver = $state(false);
+  let sftpClipboard = $state<null | { connId: string; path: string; name: string; dir: boolean }>(null);
   // connId + path：切换服务器时，旧服务器仍在进行的删除不会误伤当前列表状态。
   let sftpDeleting = $state(new Set<string>());
   function sftpDeletingKey(connId: string, path: string): string { return `${connId}\n${path}`; }
@@ -9215,7 +9507,11 @@
     if (row && isSftpDeleting(row.path)) return;
     if (row) sftpSel = row.path;
     // 贴边时往回收，别让菜单跑出窗口
-    fctxMenu = { x: Math.min(e.clientX, window.innerWidth - 190), y: Math.min(e.clientY, window.innerHeight - 240), row };
+    fctxMenu = {
+      x: Math.max(8, Math.min(e.clientX, window.innerWidth - 190)),
+      y: Math.max(8, Math.min(e.clientY, window.innerHeight - 320)),
+      row,
+    };
   }
   $effect(() => {
     if (!fctxMenu) return;
@@ -9234,6 +9530,39 @@
   async function copyPath(p: string) {
     try { await navigator.clipboard.writeText(p); say('已复制路径'); }
     catch { say('复制失败，请手动选择复制', 'err'); }
+  }
+  function copySftpEntry(r: SftpRow) {
+    sftpClipboard = { connId: sftpConnId, path: r.path, name: r.name, dir: r.dir && !r.link };
+    say(`已复制「${r.name}」，在目标文件夹右键粘贴`);
+  }
+  function copyTargetName(name: string, dir: boolean, taken: Set<string>): string {
+    if (!taken.has(name)) return name;
+    let stem = name;
+    let ext = '';
+    if (!dir) {
+      const dot = name.lastIndexOf('.');
+      if (dot > 0) { stem = name.slice(0, dot); ext = name.slice(dot); }
+    }
+    for (let i = 1; i < 1000; i++) {
+      const candidate = `${stem} 副本${i === 1 ? '' : ` ${i}`}${ext}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${stem} 副本 ${Date.now()}${ext}`;
+  }
+  async function pasteSftpEntry(dir = sftpPath) {
+    const copied = sftpClipboard;
+    if (!copied || copied.connId !== sftpConnId || !dir || sftpXfer) return;
+    sftpXfer = `复制 ${copied.name}…`;
+    try {
+      // 粘贴前重新读取目标目录，避免缓存落后于服务器时误判重名并让 cp 失败。
+      const kids = await invoke<SftpEntry[]>('sftp_list', { connId: sftpConnId, path: dir });
+      const name = copyTargetName(copied.name, copied.dir, new Set(kids.map((item) => item.name)));
+      const target = sftpJoin(dir, name);
+      await invoke('sftp_copy', { connId: sftpConnId, from: copied.path, to: target });
+      say(name === copied.name ? `已粘贴「${name}」` : `已粘贴为「${name}」`);
+      await loadDir(dir, true);
+    } catch (e) { say(String(e), 'err'); }
+    finally { sftpXfer = ''; }
   }
   // 新建文件夹 / 重命名共用一个「起名」弹窗。dir＝在哪个目录里操作。
   let fsAsk = $state<null | { mode: 'mkdir' | 'rename'; dir: string; from: string; value: string; busy: boolean; err: string }>(null);
@@ -9302,6 +9631,53 @@
     sftpXfer = '';
     say(paths.length > 1 ? `已上传 ${paths.length} 个文件` : '已上传');
     await loadDir(dir, true);
+  }
+  /** WebView 拖入文件在部分平台会暴露本地 path，可复用流式上传；拿不到时用内容兜底。 */
+  async function sftpUploadDropped(files: File[], dir = sftpPath) {
+    if (!files.length || !dir || sftpXfer) return;
+    const connId = sftpConnId;
+    let uploaded = 0;
+    for (const file of files) {
+      const name = file.name.trim();
+      if (!name) continue;
+      sftpXfer = `上传 ${name}…`;
+      try {
+        const local = (file as File & { path?: string }).path?.trim();
+        if (local) {
+          await invoke('sftp_upload', { connId, local, remote: sftpJoin(dir, name) });
+        } else {
+          if (file.size > 25 * 1024 * 1024) throw new Error('拖入文件上限为 25MB；大文件请使用右上角上传按钮');
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          await invoke('sftp_write', { connId, path: sftpJoin(dir, name), b64: bytesToB64(bytes) });
+        }
+        uploaded++;
+      } catch (e) {
+        say(String(e), 'err');
+        break;
+      }
+    }
+    sftpXfer = '';
+    if (uploaded) {
+      say(uploaded > 1 ? `已拖入上传 ${uploaded} 个文件` : '已拖入上传');
+      if (sftpConnId === connId) await loadDir(dir, true);
+    }
+  }
+  function onSftpDragOver(e: DragEvent) {
+    if (!e.dataTransfer?.types?.includes('Files') || sftpBusy || !!sftpXfer) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    sftpFileOver = true;
+  }
+  function onSftpDragLeave(e: DragEvent) {
+    const next = e.relatedTarget;
+    if (!(next instanceof Node) || !(e.currentTarget as HTMLElement).contains(next)) sftpFileOver = false;
+  }
+  function onSftpDrop(e: DragEvent) {
+    sftpFileOver = false;
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (!files.length) return;
+    e.preventDefault();
+    void sftpUploadDropped(files);
   }
   // 在线编辑器
   let edOpen = $state(false);
@@ -9778,6 +10154,14 @@
   async function openConv(id: string) {
     const c = await invoke<Conversation | null>('get_conversation', { id });
     if (!c) { await refreshConvos(); return; }
+    if (c.task_type === 'skill') {
+      activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; threadEffort = c.effort || '';
+      view = 'thread';
+      attachments = []; queued = null;
+      expandSite(c.skill_ids?.[0] || c.site_slug || '(未知技能)');
+      scrollSoon(true);
+      return;
+    }
     // 打开的对话可能属于别的连接（从搜索/任务链接进来）——切到它固定的创建位置，
     // workspace 也一样；这只影响侧栏位置，后端仍使用隔离运行环境。
     if (c.conn_id !== activeConnId) {
@@ -10526,7 +10910,7 @@
     try {
       await invoke('delete_conversation', { id });
       clearStructuredGcmsUnlock(id);
-      if (activeConvId === id) { activeConvId = ''; activeConv = null; viewAfterConvGone(); }
+      if (activeConvId === id) { const wasSkill = c?.task_type === 'skill'; activeConvId = ''; activeConv = null; viewAfterConvGone(wasSkill); }
       await refreshConvos();
     } catch (e) { say(String(e), 'err'); }
   }
@@ -10622,7 +11006,7 @@
   /** 当前对话没了（删掉/丢失/新建）之后该落到哪儿。
    *  ★ 远程连接永远留在工作台（底部面板自己退回起点输入框）——**别在各处硬写 view='launcher'**，
    *  那会把人踢出工作台、终端从眼前消失。ssh 连接压根没有启动页。 */
-  function viewAfterConvGone() { view = isSshConn ? 'remote' : 'launcher'; }
+  function viewAfterConvGone(wasSkill = false) { view = wasSkill || view === 'skillchat' || view === 'skills' ? 'skillchat' : isSshConn ? 'remote' : 'launcher'; }
   // 首轮也能流式渲染 + 停止（cancel 键对准真正的注册表 key）。
   function beginTurn(convId: string, optimistic: Conversation) {
     if (retryTimers[convId]) { clearTimeout(retryTimers[convId]); delete retryTimers[convId]; } // 任何新一轮开始都取消该会话待触发的自动重连
@@ -10658,7 +11042,9 @@
     cfReady = false; // 本轮跑完再重新判定是否已建出内容
     // 远程连接：对话就在工作台底部面板里跑，别跳去独立对话页——那样终端就从眼前消失了。
     // （openConv/newChat/selectConn 同理，见各自注释。这条是「发消息新建对话」这一路。）
-    if (conns.find((c) => c.id === optimistic.conn_id)?.kind === 'ssh') {
+    if (optimistic.task_type === 'skill') {
+      view = 'thread';
+    } else if (conns.find((c) => c.id === optimistic.conn_id)?.kind === 'ssh') {
       view = 'remote';
       if (!wb.chat) setWbFlags({ chat: true });
     } else {
@@ -10740,7 +11126,7 @@
     await refreshConvos();
     const reloaded = await invoke<Conversation | null>('get_conversation', { id: convId });
     if (reloaded) { if (activeConvId === convId) activeConv = reloaded; }
-    else if (activeConvId === convId) { activeConv = null; viewAfterConvGone(); }
+    else if (activeConvId === convId) { const wasSkill = activeConv?.task_type === 'skill'; activeConv = null; viewAfterConvGone(wasSkill); }
     if (activeConvId === convId) scrollSoon();
   }
 
@@ -10749,7 +11135,9 @@
     const workspace = isWorkspaceChat;
     const multi = !platformBuild && !workspace && !isSshConn && lSites.length > 1;
     const targetReady = isSshConn || platformBuild || workspace || multi || !!lSite.trim();
-    const buildReady = platformBuild ? (siteBuildMode === 'guided' ? siteBuildGuideReady : siteBuildChatReady) : !!lDraft.trim();
+    const buildReady = platformBuild
+      ? (siteBuildMode === 'guided' ? siteBuildGuideReady : siteBuildChatReady)
+      : (!!lDraft.trim() || (isSshConn && attachments.length > 0));
     if (!targetReady || !buildReady || !brainUsable(lBrain)) return;
     const site = platformBuild || workspace ? undefined : sites.find((s) => s.slug === lSite);
     const taskType: TaskType = isSshConn ? 'remote' : isCfConn ? 'sitebuild' : workspace ? 'workspace' : lTask;
@@ -10757,7 +11145,10 @@
     const model = lModel;
     // CF 建站：把所选视觉风格的 tokens 指令拼进首条消息（可见、可追溯）。
     const styleDir = isCfConn && lStyle ? STYLE_DIRECTIVES[lStyle] : '';
-    const text = platformBuild ? siteBuildMessage() : lDraft.trim() + (styleDir ? `\n\n【视觉风格】${styleDir}` : '');
+    let text = platformBuild ? siteBuildMessage() : lDraft.trim() + (styleDir ? `\n\n【视觉风格】${styleDir}` : '');
+    if (!platformBuild && attachments.length) {
+      text += (text ? '\n\n' : '') + ATT_MARKER + '\n' + attachments.map((a) => `- ${a.path}`).join('\n');
+    }
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
     // 远程连接没有站点：slug 留空，侧栏分组名用 user@host（那就是这台机器的身份）。
@@ -10767,7 +11158,7 @@
     const conversationConnId = activeConnId;
     const optimistic: Conversation = {
       id, conn_id: conversationConnId, conn_name: activeConn?.name ?? '', site_slug: mSlug, site_name: mName, site_slugs: multi ? [...lSites] : [],
-      workspace_dir: workspace ? workspaceDir : '',
+      workspace_dir: workspace ? workspaceDir : '', skill_ids: [],
       task_type: taskType, brain: lBrain, model, perm_mode: lPerm, effort: lEffort, session_ref: '',
       title: text.slice(0, 30), messages: [optimisticUser(text)], status: 'running', created_at: now, updated_at: now,
     };
@@ -10775,13 +11166,14 @@
     convos = [optimistic, ...convos];
     delete autoRetried[id];
     beginTurn(id, optimistic);
-    if (!platformBuild) lDraft = '';
+    if (!platformBuild) { lDraft = ''; attachments = []; }
     try {
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId: conversationConnId, siteSlug: mSlug, siteName: mName,
         siteSlugs: multi ? lSites : [], siteNames: mNames,
         taskType, brain: lBrain, model, permMode: lPerm, effort: lEffort, fast: lFast,
         workspaceDir: workspace ? workspaceDir : '',
+        skillIds: [],
         message: text, onEvent: makeChannel(id),
       });
       await refreshConvos();
@@ -10791,6 +11183,67 @@
       if (!failed && workspace) workspaceDir = '';
       maybeAutoRetry(id, failed, errText);
     } catch (e) { await failTurn(e, id); }
+  }
+
+  async function startSkillChat() {
+    const skill = selectedLaunchSkill;
+    const text = lDraft.trim();
+    if (!skill || !text || !brainUsable(lBrain)) return;
+    prefs.brain = lBrain; prefs.model = lModel; prefs.perm = lPerm; prefs.effort = lEffort; savePrefs(prefs);
+    const id = crypto.randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    const optimistic: Conversation = {
+      id,
+      conn_id: SKILLS_CONN_ID,
+      conn_name: '技能',
+      site_slug: skill.id,
+      site_name: skill.name,
+      site_slugs: [],
+      skill_ids: [skill.id],
+      workspace_dir: '',
+      task_type: 'skill',
+      brain: lBrain,
+      model: lModel,
+      perm_mode: lPerm,
+      effort: lEffort,
+      session_ref: '',
+      title: text.slice(0, 30),
+      messages: [optimisticUser(text)],
+      status: 'running',
+      created_at: now,
+      updated_at: now,
+    };
+    convos = [optimistic, ...convos];
+    delete autoRetried[id];
+    beginTurn(id, optimistic);
+    lDraft = '';
+    try {
+      const conv = await invoke<Conversation>('start_conversation', {
+        convId: id,
+        connId: SKILLS_CONN_ID,
+        siteSlug: skill.id,
+        siteName: skill.name,
+        siteSlugs: [],
+        siteNames: [],
+        taskType: 'skill',
+        brain: lBrain,
+        model: lModel,
+        permMode: lPerm,
+        effort: lEffort,
+        fast: lFast,
+        workspaceDir: '',
+        skillIds: [skill.id],
+        message: text,
+        onEvent: makeChannel(id),
+      });
+      await refreshConvos();
+      const failed = lives[id]?.failed ?? false;
+      const errText = lives[id]?.error ?? '';
+      endTurn(conv, id);
+      maybeAutoRetry(id, failed, errText);
+    } catch (e) {
+      await failTurn(e, id);
+    }
   }
 
   // ---------- 附件：粘贴/拖拽文件到输入框，存进项目目录供 AI 读取 ----------
@@ -10820,7 +11273,7 @@
   // 顺带让上次读失败（''）的条目在重进会话时有重试机会。
   let thumbs = $state<Record<string, string>>({});
   const thumbJobs = new Map<string, Promise<string>>();
-  function conversationProject(c: Conversation): string { return c.task_type === 'workspace' ? c.id : c.site_slug; }
+  function conversationProject(c: Conversation): string { return c.task_type === 'workspace' || c.task_type === 'skill' ? c.id : c.site_slug; }
   function thumbKey(p: string): string { return activeConv ? activeConv.conn_id + '|' + conversationProject(activeConv) + '|' + p : '||' + p; }
   // 读工作目录内图片 → data URI（并发去重；失败缓存空串＝退回文件卡样式）。
   function loadWorkdirImg(connId: string, project: string, p: string): Promise<string> {
@@ -10861,21 +11314,39 @@
   let lightbox = $state('');
   let attachments = $state<Attach[]>([]);
   let attaching = $state(false);
+  let attachingCount = 0;
   let composerFileOver = $state(false);
+  function attachmentTarget(): { connId: string; project: string } | null {
+    // 远程工作台的首条消息还没有 Conversation，但连接本身已经有本地工作目录。
+    // 进入已有对话后仍以该对话为准；避免把另一个连接残留的 activeConv 当成当前目标。
+    if (activeConv && (view !== 'remote' || activeConv.conn_id === activeConnId)) {
+      return { connId: activeConv.conn_id, project: conversationProject(activeConv) };
+    }
+    if (view === 'remote' && isSshConn && activeConnId) return { connId: activeConnId, project: '' };
+    return null;
+  }
+  function attachmentFilename(f: File): string {
+    if (f.name.trim()) return f.name.trim();
+    const ext = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' } as Record<string, string>)[f.type] || 'bin';
+    return `clipboard-${Date.now()}.${ext}`;
+  }
   async function attachFile(f: File) {
-    if (!activeConv) { say('先进入一个对话再添加文件', 'err'); return; }
+    const target = attachmentTarget();
+    if (!target) { say('先进入一个对话再添加文件', 'err'); return; }
     if (f.size > 25 * 1024 * 1024) { say('文件太大（上限 25MB）', 'err'); return; }
+    const filename = attachmentFilename(f);
+    attachingCount++;
     attaching = true;
     try {
       const buf = new Uint8Array(await f.arrayBuffer());
-      const path = await invoke<string>('save_attachment', { connId: activeConv.conn_id, project: conversationProject(activeConv), filename: f.name, data: Array.from(buf) });
+      const path = await invoke<string>('save_attachment', { connId: target.connId, project: target.project, filename, data: Array.from(buf) });
       let preview = '';
-      if (f.type.startsWith('image/')) {
+      if (f.type.startsWith('image/') || isImgPath(filename)) {
         preview = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => res(''); r.readAsDataURL(f); });
       }
-      attachments = [...attachments, { name: path.split('/').pop() || f.name, path, preview }];
+      attachments = [...attachments, { name: path.split('/').pop() || filename, path, preview }];
     } catch (e) { say(String(e), 'err'); }
-    finally { attaching = false; }
+    finally { attachingCount--; attaching = attachingCount > 0; }
   }
   function removeAttachment(i: number) { attachments = attachments.filter((_, idx) => idx !== i); }
 
@@ -10918,9 +11389,18 @@
   }
   function clearQueued() { queued = null; }
   function onComposerPaste(e: ClipboardEvent) {
-    const items = e.clipboardData?.items; if (!items) return;
-    let handled = false;
-    for (const it of items) { if (it.kind === 'file') { const f = it.getAsFile(); if (f) { attachFile(f); handled = true; } } }
+    const data = e.clipboardData;
+    if (!data) return;
+    const files = Array.from(data.files);
+    if (!files.length) {
+      for (const item of Array.from(data.items)) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    const handled = files.length > 0;
+    for (const file of files) void attachFile(file);
     if (handled) e.preventDefault();
   }
   function onComposerDrop(e: DragEvent) {
@@ -11327,12 +11807,13 @@
   }
   function taskLabel(t: string): string {
     const task = normalizedTaskType(t);
-    return task === 'sitebuild' ? '新站建设' : task === 'siteops' ? '站点运营' : task === 'remote' ? '远程运维' : '自由对话';
+    return task === 'sitebuild' ? '新站建设' : task === 'siteops' ? '站点运营' : task === 'skill' ? '技能对话' : task === 'remote' ? '远程运维' : '自由对话';
   }
   function conversationTaskLabel(c: Conversation | null | undefined): string {
     return isMultiSiteConversation(c) ? '跨站会话' : taskLabel(c?.task_type ?? '');
   }
   function conversationGroupKey(c: Conversation): string {
+    if (c.task_type === 'skill') return c.skill_ids?.[0] || c.site_slug || '(未知技能)';
     if (c.task_type === 'workspace') return WORKSPACE_CONN_ID;
     // 旧版允许在“新站建设”任务类型下选多个现有站点；site_slugs 才是它真实的会话范围。
     if (isMultiSiteConversation(c)) return '__multi__';
@@ -11513,7 +11994,7 @@
   });
   // Sonnet / Haiku 用别名（--model sonnet/haiku），永远指向该档「当前最新」，厂商发新版自动
   // 跟随、无需更新客户端；sub 里的版本号只是提示，可能滞后。
-  // Fable 与 Opus 两档例外，走全 ID（原因见下），出新版需回来改这里。
+  // Fable 各版本与 Opus 两档例外，走全 ID（原因见下），出新版需回来改这里。
   //
   // ★ Opus 两档都**钉全 ID**，不用 opus 别名：
   //   - 别名不会指到 Opus 5（那是它必须写全 ID 的原因）；
@@ -11532,9 +12013,10 @@
     // ★ 必须用显式 ID，不能用别名 'sonnet'：别名由 CLI 解析，2.1.96 把它解析成
     //   claude-sonnet-4-6 —— 标签写着 Sonnet 5、实际跑的是 4.6（用户实测抓到）。
     { value: 'claude-sonnet-5', label: 'Sonnet', sub: '性价比 · Sonnet 5 · 1M 上下文' },
-    { value: 'claude-opus-5', label: 'Opus 5', sub: '最强 · Opus 5 · 1M 上下文' },
+    { value: 'claude-opus-5', label: 'Opus 5', sub: '主力 · Opus 5 · 1M 上下文' },
     { value: 'claude-opus-4-8', label: 'Opus 4.8', sub: '上一代 Opus · 1M 上下文' },
-    { value: 'claude-fable-5', label: 'Fable', sub: 'Claude 5 家族 · Fable 5 · 1M 上下文' },
+    { value: 'claude-fable-5-1', label: 'Fable 5.1', sub: '旗舰 · 最新 Fable · 1M 上下文' },
+    { value: 'claude-fable-5', label: 'Fable 5', sub: '上一代 Fable · 1M 上下文' },
     { value: 'haiku', label: 'Haiku', sub: '最快 · 当前 Haiku 4.5 · 200k 上下文' },
   ];
   // Codex 档位 = 具体模型 ID（-c model=）。首项「跟随 Codex 默认」= 不覆盖本地 codex 配置。
@@ -11550,11 +12032,12 @@
     { value: 'gpt-5.4', label: 'GPT-5.4', sub: '上一代' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini', sub: '上一代 · 最省' },
   ];
-  // Grok（订阅通道）目前只开放 grok-4.5 一档（登录后 `grok models` 实测清单）；
-  // 首项「跟随默认」= 不传 --model，厂商换默认自动跟随。其他新模型走「自定义模型 ID」。
+  // Grok（订阅通道）模型取自登录后的 `grok models` 实测清单；首项「跟随默认」
+  // 不传 --model，厂商换默认时自动跟随。显式档位方便会话固定模型与回退上一代。
   const GROK_MODELS = [
-    { value: '', label: '跟随 Grok 默认', sub: '当前 Grok 4.5' },
-    { value: 'grok-4.5', label: 'Grok 4.5', sub: '500k 上下文' },
+    { value: '', label: '跟随 Grok 默认', sub: '当前 Grok 4.6' },
+    { value: 'grok-4.6', label: 'Grok 4.6', sub: '最新 · 500k 上下文' },
+    { value: 'grok-4.5', label: 'Grok 4.5', sub: '上一代 · 500k 上下文' },
   ];
   function modelOptsFor(b: string) { return b === 'codex' ? CODEX_MODELS : b === 'grok' ? GROK_MODELS : CLAUDE_MODELS; }
   // launcher / 会话里可选：预设档位 + 该厂商的全局自定义模型 ID（定时任务表单仍只用预设 + 自己的 modelCustom）。
@@ -11594,6 +12077,36 @@
       return { slug: s.slug, name: s.name, count: s.convs.length, subs, pendingSiteIcon, url: virtual ? '' : isCfConn ? detectSiteUrl(s.convs) : (sites.find((x) => x.slug === s.slug)?.url ?? '') };
     });
   });
+  const skillGrouped = $derived.by(() => {
+    const bySkill = new Map<string, { slug: string; name: string; domain: string; recent: number; convs: Conversation[] }>();
+    for (const c of convos) {
+      if (c.task_type !== 'skill' && c.conn_id !== SKILLS_CONN_ID) continue;
+      const skillId = c.skill_ids?.[0] || c.site_slug || '(未知技能)';
+      const installed = installedSkills.find((skill) => skill.id === skillId);
+      const group = bySkill.get(skillId) ?? {
+        slug: skillId,
+        name: installed?.name || c.site_name || '未知技能',
+        domain: installed?.site_domain || '',
+        recent: 0,
+        convs: [],
+      };
+      group.convs.push(c);
+      group.recent = Math.max(group.recent, c.updated_at);
+      bySkill.set(skillId, group);
+    }
+    return [...bySkill.values()]
+      .sort((a, b) => b.recent - a.recent)
+      .map((group) => ({
+        slug: group.slug,
+        name: group.name,
+        count: group.convs.length,
+        subs: [{ type: 'skill', label: '技能对话', items: group.convs.sort((a, b) => b.updated_at - a.updated_at) }],
+        pendingSiteIcon: false,
+        url: group.domain ? `https://${group.domain}` : '',
+      }));
+  });
+  const inSkillWorkspace = $derived(view === 'skills' || view === 'skillchat' || activeConvIsSkill);
+  const visibleGrouped = $derived(inSkillWorkspace ? skillGrouped : grouped);
   // CF 页脚：有域名（已部署）的项目算「站点」。
   const cfSiteCount = $derived(grouped.filter((g) => g.url).length);
   function faviconOf(u: string): string { try { return new URL(u).origin + '/favicon.ico'; } catch { return ''; } }
@@ -11679,13 +12192,19 @@
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="rail-resize" title="拖动调整宽度" onmousedown={startResize} role="separator" aria-orientation="vertical"></div>
     <div class="rail-head">
-      <button class="newchat" onclick={newChat} disabled={!activeConn} title="新对话">
+      <button class="newchat" onclick={inSkillWorkspace ? newSkillChat : newChat} disabled={!inSkillWorkspace && !activeConn} title="新对话">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
           <path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
           <path d="M2.5 13.5h11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
         </svg>
         新对话
       </button>
+      {#if inSkillWorkspace}
+      <button class="railnav {view === 'skills' ? 'on' : ''}" type="button" onclick={openSkillLibrary}>
+        {@render skillIcon(14)}
+        技能库
+      </button>
+      {:else}
       {#if !isCfConn && !isSshConn}
       <button class="railnav {view === 'sites' ? 'on' : ''}" onclick={openSites} disabled={!activeConn}>
         {@render sitesIcon(14)}
@@ -11714,16 +12233,19 @@
         提示词
       </button>
       {/if}
+      {/if}
     </div>
 
     <div class="convos" class:scrolled={convosScrolled} onscroll={(e) => (convosScrolled = (e.currentTarget as HTMLElement).scrollTop > 2)}>
-      {#if grouped.length === 0}
-        <p class="rail-empty">还没有对话。<br />选好站点和模型，直接说你想做什么。</p>
+      {#if visibleGrouped.length === 0}
+        <p class="rail-empty">{inSkillWorkspace ? '还没有技能对话。' : '还没有对话。'}<br />{inSkillWorkspace ? '选择一个已启用技能，直接说你想做什么。' : '选好站点和模型，直接说你想做什么。'}</p>
       {/if}
-      {#each grouped as g (g.slug)}
+      {#each visibleGrouped as g (g.slug)}
         <button class="site-grp" onclick={() => toggleSite(g.slug)} title={g.name}>
           <svg class="site-grp-chev" class:collapsed={collapsedSites.has(g.slug)} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          {#if g.slug === WORKSPACE_CONN_ID}
+          {#if inSkillWorkspace}
+            <SkillFav domain={g.url ? hostOf(g.url) : ''} size={14} />
+          {:else if g.slug === WORKSPACE_CONN_ID}
             {@render workspaceMark(14)}
           {:else if g.slug === '__multi__'}
             {@render multiSiteMark(14)}
@@ -11762,37 +12284,42 @@
 
     <div class="foot-wrap" bind:this={footerEl}>
       {#if switcherOpen}
-        <div class="conn-switch">
-          {#each conns as c (c.id)}
-            <button class="cs-item {activeConnId === c.id ? 'on' : ''}" onclick={() => { selectConn(c.id); switcherOpen = false; }}
-              oncontextmenu={(e) => openConnCtx(e, c)}>
-              {#if c.kind === 'cloudflare'}{@render cfMark(18)}{:else if c.kind === 'ssh'}{@render sshMark(18)}{:else}<SiteMark size={18} />{/if}
-              <span class="cs-main"><b>{connectionDisplayName(c)}{#if packUpdates[c.id]}<span class="pack-dot" title="技能包有新版，去「连接与模型设置」一键升级"></span>{/if}</b>
-                {#if c.kind === 'ssh'}
-                  <small class="cs-os">{@render distroMark(distroOf(c), 12)}<span class="cs-os-label">{sshSub(c)}</span></small>
-                {:else}
-                  <small><span class:conn-remark={!!c.remark?.trim()} data-tip={c.remark?.trim() ? `脱敏 Key：${c.key_prefix}` : undefined}>{c.remark?.trim() || c.key_prefix}</span> · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small>
-                {/if}</span>
-              {#if activeConnId === c.id}<span class="cs-check">✓</span>{/if}
-            </button>
-          {/each}
-          <!-- 没连接时上面是空的，别拿一条分隔线开头 -->
-          {#if conns.length}<div class="cs-div"></div>{/if}
-          <button class="cs-act" onclick={() => { switcherOpen = false; importPack(); }}>{@render plusIcon()}导入 gcms 技能包</button>
-          <button class="cs-act" onclick={() => { switcherOpen = false; openCfConnect(); }}>{@render cfMark(15)}连接 Cloudflare</button>
-          <button class="cs-act" onclick={() => { switcherOpen = false; openSshConnect(); }}>{@render sshMark(15)}新建远程连接</button>
-          <button class="cs-act" onclick={openGcmsInstaller}>{@render gcmsInstallIcon(15)}安装与管理 gcms</button>
-          <button type="button" class="cs-act" onclick={openConnectionSetup}>{@render gearIcon()}连接与模型设置…</button>
+        <div class="conn-switch" role="menu" aria-label="切换连接">
+          <div class="cs-scroll" aria-label="连接列表">
+            {#each conns as c (c.id)}
+              <button class="cs-item {activeConnId === c.id ? 'on' : ''}" role="menuitemradio" aria-checked={activeConnId === c.id} onclick={() => { selectConn(c.id); switcherOpen = false; }}
+                oncontextmenu={(e) => openConnCtx(e, c)}>
+                {#if c.kind === 'cloudflare'}{@render cfMark(18)}{:else if c.kind === 'ssh'}{@render sshMark(18)}{:else}<SiteMark size={18} />{/if}
+                <span class="cs-main"><b>{connectionDisplayName(c)}{#if packUpdates[c.id]}<span class="pack-dot" title="技能包有新版，去「连接与模型设置」一键升级"></span>{/if}</b>
+                  {#if c.kind === 'ssh'}
+                    <small class="cs-os">{@render distroMark(distroOf(c), 12)}<span class="cs-os-label">{sshSub(c)}</span></small>
+                  {:else}
+                    <small><span class:conn-remark={!!c.remark?.trim()} data-tip={c.remark?.trim() ? `脱敏 Key：${c.key_prefix}` : undefined}>{c.remark?.trim() || c.key_prefix}</span> · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small>
+                  {/if}</span>
+                {#if activeConnId === c.id}<span class="cs-check">✓</span>{/if}
+              </button>
+            {/each}
+          </div>
+          <div class="cs-actions">
+            <!-- 没连接时上面是空的，别拿一条分隔线开头 -->
+            {#if conns.length}<div class="cs-div"></div>{/if}
+            <button class="cs-act" class:on={inSkillWorkspace} role="menuitem" onclick={openSkills}>{@render skillIcon(15)}技能工作区</button>
+            <div class="cs-div"></div>
+            <button class="cs-act" role="menuitem" onclick={() => { switcherOpen = false; openCfConnect(); }}>{@render cfMark(15)}连接 Cloudflare</button>
+            <button class="cs-act" role="menuitem" onclick={() => { switcherOpen = false; openSshConnect(); }}>{@render sshMark(15)}新建远程连接</button>
+            <button class="cs-act" role="menuitem" onclick={openGcmsInstaller}>{@render gcmsInstallIcon(15)}GCMS 服务器</button>
+            <button type="button" class="cs-act" role="menuitem" onclick={openConnectionSetup}>{@render gearIcon()}连接与模型设置…</button>
+          </div>
         </div>
       {/if}
     <!-- 空态也走切换器（不再直跳设置）：菜单里三条连接路径 + 设置一次性摆出，和有连接时同一套交互。 -->
     <button class="rail-foot" class:open={switcherOpen} onclick={() => { switcherOpen = !switcherOpen; }}>
-      {#if isCfConn}{@render cfMark(18)}{:else if isSshConn}{@render sshMark(18)}{:else if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
+      {#if inSkillWorkspace}{@render skillIcon(18)}{:else if isCfConn}{@render cfMark(18)}{:else if isSshConn}{@render sshMark(18)}{:else if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
       <span class="foot-main">
-        <b>{activeConn ? connectionDisplayName(activeConn) : '未连接'}</b>
+        <b>{inSkillWorkspace ? '技能工作区' : activeConn ? connectionDisplayName(activeConn) : '未连接'}</b>
         <!-- 未连接时不出副文案：中间大区域已有导入/连接引导，这里越安静越好（原来那句「点此导入技能包」
              既和点击行为对不上，又只提了三种连接方式里的一种，已去掉）。 -->
-        {#if activeConn}<small>{#if isCfConn}{cfProjects.length} 个项目{cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}{:else if isSshConn}<!--
+        {#if inSkillWorkspace}<small>{enabledSkills.length} 个已启用技能</small>{:else if activeConn}<small>{#if isCfConn}{cfProjects.length} 个项目{cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}{:else if isSshConn}<!--
           远程连接没有「站点」这回事：这里放远端系统版本（点一下重探，比如刚 do-release-upgrade 过）。
         --><span class="foot-os" role="button" tabindex="-1" title="远端系统 · 点击重新检测"
           onclick={(e) => { e.stopPropagation(); probeOs(activeConnId, true); }}
@@ -11822,16 +12349,159 @@
       <div class="lightbox" onclick={() => (lightbox = '')}><img src={lightbox} alt="附件大图" /></div>
     {/if}
 
-    {#if !activeConn}
+    {#if view === 'skills'}
+      <!-- 通用技能是 Pilot 全局能力，不隶属任何连接。 -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="th-info">
+          <b class="th-title">{@render skillIcon(16)}<span>技能库</span></b>
+          <small>管理 Pilot 中可供技能对话选择的通用技能</small>
+        </div>
+        <div class="skill-head-actions">
+          <button class="icon-btn" type="button" onclick={() => void loadSkills(true)} disabled={skillsLoading} data-tip="刷新技能列表" aria-label="刷新技能列表">{@render refreshIcon(skillsLoading)}</button>
+          <div class="skill-import-menu-wrap">
+            <button class="btn soft bare skill-import-trigger" type="button" onclick={toggleSkillImportMenu} aria-haspopup="menu" aria-expanded={skillImportMenuOpen} disabled={skillInspecting || skillInstalling}>
+              {@render plusIcon()}导入技能包
+              <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </button>
+            {#if skillImportMenuOpen}
+              <div class="skill-import-menu" role="menu" tabindex="-1">
+                <button type="button" role="menuitem" onclick={() => void chooseSkillPackage('folder')}>
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M2.5 5.25h5l1.2 1.5h6.8v6.5a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5v-8Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/><path d="M2.5 6.75V4.9A1.15 1.15 0 0 1 3.65 3.75h3.1l1.1 1.5" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/></svg>
+                  <span><b>从文件夹导入</b><small>选择直接包含 SKILL.md 的目录</small></span>
+                </button>
+                <button type="button" role="menuitem" onclick={() => void chooseSkillPackage('zip')}>
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 2.75h6l4 4v8.5H4V2.75Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/><path d="M10 2.75v4h4M8.25 5h1.5M8.25 7.25h1.5M8.25 9.5h1.5M8.25 11.75h1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+                  <span><b>从 ZIP 导入</b><small>选择打包好的 .zip 技能包</small></span>
+                </button>
+              </div>
+            {/if}
+          </div>
+        </div>
+      </header>
+      <div class="thread">
+        <div class="skill-inner">
+          {#if skillsLoading && installedSkills.length === 0}
+            <div class="skill-page-state" role="status"><span class="gcms-spin" aria-hidden="true"></span><span>正在读取已安装技能…</span></div>
+          {:else if skillsError}
+            <div class="skill-page-state error" role="alert">
+              <b>技能列表读取失败</b>
+              <span>{skillsError}</span>
+              <button class="btn sm ghost" type="button" onclick={() => void loadSkills()}>重试</button>
+            </div>
+          {:else if installedSkills.length === 0}
+            <div class="sched-empty skill-empty">
+              <div class="cal-mark">{@render skillIcon(34)}</div>
+              <b>还没有导入通用技能</b>
+              <p>技能包会为本地 AI 补充专业流程、参考资料和工具说明，不会自动建立站点或账号连接。</p>
+              <button class="btn soft" type="button" onclick={() => void chooseSkillPackage('folder')}>{@render plusIcon()}选择技能文件夹</button>
+            </div>
+          {:else}
+            <div class="skill-summary">
+              <span><b>{installedSkills.length}</b> 个技能</span>
+              <span><b>{installedSkills.filter((skill) => skill.enabled).length}</b> 个已启用</span>
+              <small>技能与连接分开管理；启用技能不会自动获得外部账号权限。</small>
+            </div>
+            <div class="skill-list">
+              {#each filteredSkills as skill (skill.id)}
+                <article class="skill-card" class:disabled={!skill.enabled}>
+                  <span class="skill-card-icon" aria-hidden="true"><SkillFav domain={skill.site_domain} size={20} /></span>
+                  <span class="skill-card-copy">
+                    <span class="skill-card-title">
+                      <b>{skill.name}</b>
+                      {#if skill.site_domain}<span class="skill-domain">{skill.site_domain}</span>{/if}
+                      <em>{skillVersion(skill.version)}</em>
+                    </span>
+                    <span class="skill-card-description">{skill.description || '这个技能没有提供说明。'}</span>
+                    <span class="skill-card-meta">
+                      <span>{skill.has_scripts ? '包含可执行脚本' : '指令与参考资料'}</span><i>·</i><code title={skill.sha256}>{compactDigest(skill.sha256)}</code>
+                    </span>
+                  </span>
+                  <span class="skill-card-control">
+                    {#if skill.has_scripts}<em class="skill-risk">含脚本</em>{/if}
+                    <span class="skill-enabled-label">{skillToggleBusy[skill.id] ? '处理中…' : skill.enabled ? '已启用' : '已停用'}</span>
+                    <button
+                      type="button"
+                      class="switch {skill.enabled ? 'on' : ''}"
+                      role="switch"
+                      aria-checked={skill.enabled}
+                      aria-label={`${skill.enabled ? '停用' : '启用'}${skill.name}`}
+                      disabled={!!skillToggleBusy[skill.id]}
+                      onclick={() => void toggleInstalledSkill(skill)}
+                    ><span></span></button>
+                  </span>
+                </article>
+              {/each}
+            </div>
+            {#if filteredSkills.length === 0}
+              <div class="skill-filter-empty">
+                {@render skillIcon(22)}
+                <span>{skillFilter === 'enabled' ? '还没有已启用的技能' : '还没有已停用的技能'}</span>
+              </div>
+            {/if}
+          {/if}
+        </div>
+      </div>
+
+    {:else if view === 'skillchat' && !activeConv}
+      <!-- 技能工作区的新对话：技能只在首轮选择一次，创建后随会话锁定。 -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="center launch-center skill-chat-center" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="launcher skill-chat-launcher">
+          <div class="skill-chat-heading">
+            <span class="skill-chat-mark" aria-hidden="true">{@render skillIcon(24)}</span>
+            <div><h1>用一个技能开始</h1><p class="sub">选择一个已启用的技能，再告诉 AI 这次要完成什么。技能会随这条对话固定，后续不会悄悄切换。</p></div>
+          </div>
+
+          {#if skillsLoading && installedSkills.length === 0}
+            <div class="skill-chat-loading" role="status"><span class="gcms-spin" aria-hidden="true"></span>正在读取技能…</div>
+          {:else if skillsError && installedSkills.length === 0}
+            <div class="skill-page-state error" role="alert">
+              <b>技能列表读取失败</b><span>{skillsError}</span><button class="btn sm ghost" type="button" onclick={() => void loadSkills()}>重试</button>
+            </div>
+          {:else if enabledSkills.length === 0}
+            <div class="skill-chat-empty">
+              <b>还没有可用的技能</b>
+              <p>{installedSkills.length ? '技能库中的技能都已停用。先启用一个技能，再回来开始对话。' : '先导入一个通用技能包，就可以在这里发起独立的技能对话。'}</p>
+              <div><button class="btn soft" type="button" onclick={openSkillLibrary}>打开技能库</button><button class="btn ghost" type="button" onclick={() => void chooseSkillPackage('folder')}>{@render plusIcon()}导入技能文件夹</button></div>
+            </div>
+          {:else}
+            <div class="composer big skill-chat-composer">
+              <textarea bind:value={lDraft} bind:this={lDraftEl} use:autogrow rows="3" placeholder={selectedLaunchSkill ? `告诉 ${selectedLaunchSkill.name} 你想完成什么…` : '先选择一个技能…'}
+                oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
+                onkeydown={(e) => onComposerKey(e, startSkillChat)}></textarea>
+              <div class="composer-bar">
+                <div class="cb-left">
+                  <div class="skill-picker-inline" title={selectedLaunchSkill?.description || '选择本次对话使用的技能'}>
+                    <span class="skill-picker-inline-icon" aria-hidden="true">
+                      {#if selectedLaunchSkill}<SkillFav domain={selectedLaunchSkill.site_domain} size={14} />{:else}{@render skillIcon(14)}{/if}
+                    </span>
+                    <Dropdown compact searchable bind:value={lSkillId} options={skillChatOptions} placeholder="选择技能" />
+                    {#if selectedLaunchSkill}<em>将锁定</em>{/if}
+                  </div>
+                </div>
+                <div class="cb-right">
+                  <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, false)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, false)} />
+                  <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} onfast={setFast} />
+                  <button class="send" type="button" onclick={startSkillChat} disabled={!selectedLaunchSkill || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
+                </div>
+              </div>
+            </div>
+            {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
+          {/if}
+        </div>
+      </div>
+
+    {:else if !activeConn && !activeConvIsSkill}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="center" data-tauri-drag-region onmousedown={startDrag}>
         <div class="hero-card">
           <div class="hero-mark"><AppIcon size={54} /></div>
           <h1>开始之前，先连接一个来源</h1>
-          <p>安装 gcms 到远程服务器、导入技能包为站点做内容，或连接 Cloudflare 让本地 Claude / Codex / Grok 帮你建站并部署。</p>
+          <p>安装 GCMS 到远程服务器、从 GCMS 技能包添加站点连接，或连接 Cloudflare 让本地 Claude / Codex / Grok 帮你建站并部署。</p>
           <div class="hero-btns">
             <button class="btn soft hero-import" onclick={openGcmsInstaller}>{@render gcmsInstallIcon(15)}安装 gcms</button>
-            <button class="btn soft hero-import" onclick={importPack} disabled={importBusy}>{@render plusIcon()}{importBusy ? '导入中…' : '导入技能包'}</button>
+            <button class="btn soft hero-import" onclick={importPack} disabled={importBusy}>{@render plusIcon()}{importBusy ? '添加中…' : '添加 GCMS 连接'}</button>
             <button class="btn soft hero-import" onclick={openCfConnect}>{@render cfMark(15)}连接 Cloudflare</button>
           </div>
           {#if brains}
@@ -13090,6 +13760,8 @@
             {#if termBusy}
               <!-- 建连要走网络+认证，一两秒是常事，别让黑框干愣着。浮层而非写进终端：见 startTerm。 -->
               <div class="term-connecting"><span class="tc-spin"></span>正在连接 {activeConn?.ssh_user}@{activeConn?.ssh_host}…</div>
+            {:else if termErr && missingSshCredential(termErr)}
+              <button type="button" class="term-credential-repair" onclick={repairActiveSshCredential}>连接凭据缺失 · 补录密码</button>
             {/if}
           </div>
           {#if wb.chat}
@@ -13106,16 +13778,30 @@
                      外层必须是 .composer-wrap —— 输入框的样式挂在 `.composer.big, .composer-wrap .composer` 上，
                      裸 .composer 一条都套不上（就是那次「样式缺失」）。 -->
                 <div class="wb-start composer-wrap">
-                  <div class="composer">
+                  <div class="composer" class:fileover={composerFileOver} role="group" aria-label="远程消息输入"
+                    ondragover={onComposerDragOver} ondragleave={onComposerDragLeave} ondrop={onComposerDrop}>
+                    {#if attachments.length || attaching}
+                      <div class="attach-row">
+                        {#each attachments as a, i (a.path)}
+                          <div class="attach-chip">
+                            {#if a.preview}<img class="attach-img" src={a.preview} alt="" />{:else}<span class="attach-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9 1.8H4.5A1.3 1.3 0 0 0 3.2 3.1v9.8a1.3 1.3 0 0 0 1.3 1.3h7a1.3 1.3 0 0 0 1.3-1.3V5.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9 1.8v3.7h3.8" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg></span>{/if}
+                            <span class="attach-name" title={a.name}>{a.name}</span>
+                            <button class="attach-x" aria-label="移除附件" onclick={() => removeAttachment(i)}>×</button>
+                          </div>
+                        {/each}
+                        {#if attaching}<span class="attach-loading">上传中…</span>{/if}
+                      </div>
+                    {/if}
                     <textarea bind:this={wbStartEl} bind:value={lDraft} use:autogrow rows="2" placeholder="让 AI 在这台机器上做点什么…例如：看看装了什么，帮我装上 Docker"
                       oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
+                      onpaste={onComposerPaste}
                       onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
                     <div class="composer-bar">
                       <div class="cb-left"><span class="ssh-target" title={activeConn?.ssh_os || '远端系统未知'}>{@render distroMark(distroOf(activeConn), 13)}{activeConn?.ssh_user}@{activeConn?.ssh_host}</span></div>
                       <div class="cb-right">
                         <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, true)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, true)} />
                         <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} onfast={setFast} />
-                        <button class="send" onclick={startChat} disabled={!lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
+                        <button class="send" onclick={startChat} disabled={(!lDraft.trim() && !attachments.length) || attaching || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
                       </div>
                     </div>
                   </div>
@@ -13134,7 +13820,12 @@
             <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
             <div class="wb-split v" title="拖动调整宽度" role="separator" aria-orientation="vertical" onmousedown={(e) => startWbResize(e, 'v')}></div>
           {/if}
-          <aside class="files-wrap" class:solo={wbFilesSolo} style="{wbFilesSolo ? '' : `width:${wb.filesW}px;`} --fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px">
+          <aside class="files-wrap" class:solo={wbFilesSolo} class:fileover={sftpFileOver}
+            style="{wbFilesSolo ? '' : `width:${wb.filesW}px;`} --fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px"
+            ondragover={onSftpDragOver} ondragleave={onSftpDragLeave} ondrop={onSftpDrop}>
+          {#if sftpFileOver}
+            <div class="files-drop-overlay"><b>松开即可上传</b><small>到 {sftpPath || '当前目录'}</small></div>
+          {/if}
           <div class="files-bar">
             <button class="fbtn" aria-label="上一级" data-tip="上一级" onclick={sftpUp} disabled={sftpBusy || !sftpPath || sftpPath === '/'}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
             {#if sftpPathEdit}
@@ -13158,7 +13849,7 @@
           </div>
           {#if sftpXfer}<div class="files-note">{sftpXfer}</div>{/if}
           <!-- 出错就地给个重试：首次加载失败时 sftpPath 还是空的，刷新键（要有当前目录）帮不上忙 -->
-          {#if sftpErr}<button type="button" class="err-note files-err" onclick={() => sftpGo(sftpPath)} title="点击重试">{sftpErr} · 点此重试</button>{/if}
+          {#if sftpErr}<button type="button" class="err-note files-err" onclick={retryOrRepairSftp} title={missingSshCredential(sftpErr) ? '打开连接设置并补录密码' : '点击重试'}>{sftpErr} · {missingSshCredential(sftpErr) ? '补录密码' : '点此重试'}</button>{/if}
           <div class="fhead">
             <button class="fh fh-name" onclick={() => setSort('name')}>名称{#if sftpSort.key === 'name'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
             <span class="fh fh-perm">{@render colGrip('perm')}权限</span>
@@ -13248,7 +13939,12 @@
         <div class="th-info">
           <b>{activeConv?.title}</b>
           <small>
-            {#if activeConvIsWorkspace}
+            {#if activeConvIsSkill}
+              <SkillFav domain={activeConversationSkill?.site_domain || ''} size={13} />
+              {activeConversationSkill?.name || activeConv?.site_name || activeConv?.skill_ids?.[0] || '技能'}
+              {#if activeConversationSkill?.site_domain}<span class="skill-session-domain">{activeConversationSkill.site_domain}</span>{/if}
+              <span class="skill-lock-label">已锁定</span>
+            {:else if activeConvIsWorkspace}
               {@render workspaceMark(13)} {activeConv?.workspace_dir ? workspaceFolderName(activeConv.workspace_dir) : '纯对话'}
             {:else if isMultiSiteConversation(activeConv)}
               {@render multiSiteMark(13)} <span data-tip={convSitesTip(activeConv)}>{activeConv?.site_name || `多站 · ${activeConv?.site_slugs?.length ?? 0} 站`}</span>
@@ -13472,6 +14168,8 @@
 
 {#snippet plusIcon()}<svg class="plus-ic" width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>{/snippet}
 {#snippet sitesIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" /><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
+<!-- 技能沿用设置页已有的「包」图标，和站点的层叠图标明确区分。 -->
+{#snippet skillIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m2.5 5 5.5-3 5.5 3v6L8 14l-5.5-3V5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" /><path d="M2.8 5 8 8l5.2-3M8 8v6" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet googleIcon(size: number)}<img class="vendor-icon" src="/icons/google.svg" width={size} height={size} alt="" aria-hidden="true" />{/snippet}
 {#snippet googleAuthIcon(size: number)}<img class="vendor-icon" src="/icons/google-auth.svg" width={size} height={size} alt="" aria-hidden="true" />{/snippet}
 {#snippet googleAnalyticsIcon(size: number)}<img class="vendor-icon" src="/icons/google-analytics.svg" width={size} height={size} alt="" aria-hidden="true" />{/snippet}
@@ -13845,7 +14543,14 @@
         onkeydown={(e) => onComposerKey(e, viewBusy ? queueMessage : send)}></textarea>
       <div class="composer-bar">
         <div class="cb-left">
-          {#if activeConvIsCf}
+          {#if activeConvIsSkill}
+            <span class="cb-ro skill-bound-chip" title="这条对话已绑定技能，不可更改">
+              <SkillFav domain={activeConversationSkill?.site_domain || ''} size={15} />
+              <span class="cb-ro-t">{activeConversationSkill?.name || activeConv?.site_name || activeConv?.skill_ids?.[0] || '技能'}</span>
+              {#if activeConversationSkill?.site_domain}<span class="skill-session-domain">{activeConversationSkill.site_domain}</span>{/if}
+              <em>已锁定</em>
+            </span>
+          {:else if activeConvIsCf}
             <span class="cb-ro" title="项目已固定"><span class="cb-ro-t">{activeConv?.site_slug}</span></span>
           {:else if activeConvIsWorkspace}
             <span class="cb-ro" title={activeConv?.workspace_dir || '本会话未关联文件夹'}>{@render workspaceMark(15)}<span class="cb-ro-t">{activeConv?.workspace_dir ? workspaceFolderName(activeConv.workspace_dir) : '纯对话'}</span></span>
@@ -14433,8 +15138,8 @@
                 {@render cfMark(15)}<span>连接 Cloudflare</span>
               </button>
               <button role="menuitem" onclick={() => { setupAddOpen = false; importPack(); }} disabled={importBusy}>
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m2.5 5 5.5-3 5.5 3v6L8 14l-5.5-3V5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" /><path d="M2.8 5 8 8l5.2-3M8 8v6" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" /></svg>
-                <span>{importBusy ? '导入中…' : '导入 gcms 技能包'}</span>
+                {@render skillIcon(15)}
+                <span>{importBusy ? '添加中…' : '从 GCMS 技能包添加连接'}</span>
               </button>
               <button role="menuitem" onclick={() => { setupAddOpen = false; openSshConnect(); }}>
                 {@render sshMark(15)}<span>新建远程连接</span>
@@ -14443,7 +15148,7 @@
           {/if}
         </div>
       </div>
-      {#if conns.length === 0}<p class="hint">还没有连接。导入 gcms 技能包，或连接 Cloudflare。</p>{/if}
+      {#if conns.length === 0}<p class="hint">还没有连接。可以从 GCMS 技能包添加连接，或连接 Cloudflare。</p>{/if}
       <div class="conn-list">
         {#each conns as c (c.id)}
           <div class="conn-row {activeConnId === c.id ? 'on' : ''}" role="button" tabindex="0"
@@ -14587,7 +15292,7 @@
                     <div class="cust-chip"><span class="cust-id">{id}</span><button class="cust-x" title="删除" onclick={() => removeCustom(r.b, id)}>×</button></div>
                   {/each}
                   <div class="cust-add">
-                    <input class="tin" bind:value={customDraft[r.b]} placeholder={r.b === 'codex' ? '如 gpt-5.5 / o3' : r.b === 'grok' ? '如 grok-4.5' : '如 claude-opus-4-8'}
+                    <input class="tin" bind:value={customDraft[r.b]} placeholder={r.b === 'codex' ? '如 gpt-5.5 / o3' : r.b === 'grok' ? '如 grok-4.6' : '如 claude-opus-4-8'}
                       spellcheck="false" autocapitalize="off" autocorrect="off" onkeydown={(e) => e.key === 'Enter' && addCustom(r.b)} />
                     <button class="btn sm" onclick={() => addCustom(r.b)} disabled={!(customDraft[r.b] ?? '').trim()}>添加</button>
                   </div>
@@ -14642,6 +15347,73 @@
         </button>
       </div>
     </div>
+  </div>
+{/if}
+
+{#if skillImportOpen}
+  <div class="mask" role="presentation" onclick={closeSkillImport}></div>
+  <div class="sheet skill-import-sheet" use:sheetWidth={SHEET_WIDTH.skillImport} role="dialog" aria-modal="true" aria-label="导入通用技能包">
+    <header class="sheet-head skill-import-head">
+      <div class="skill-import-title">
+        <span class="skill-import-title-icon" aria-hidden="true">{@render skillIcon(16)}</span>
+        <span><b>导入技能包</b><small>{skillPackageName(skillImportPath)}</small></span>
+      </div>
+      <button class="x" type="button" onclick={closeSkillImport} disabled={skillInspecting || skillInstalling}>×</button>
+    </header>
+    <div class="sheet-body skill-import-body">
+      {#if skillInspecting}
+        <div class="skill-import-progress" role="status">
+          <span class="gcms-spin" aria-hidden="true"></span>
+          <span><b>正在检查技能包</b><small>读取说明、文件与脚本信息…</small></span>
+        </div>
+      {:else if skillImportError && !skillInspection}
+        <div class="skill-import-failure" role="alert">
+          <b>无法读取这个技能包</b>
+          <span>{skillImportError}</span>
+        </div>
+        <p class="skill-import-note">请选择根目录含合法 <code>SKILL.md</code> 的技能文件夹，或包含一个技能的 ZIP。未通过检查的内容不会写入 Pilot。</p>
+      {:else if skillInspection}
+        <section class="skill-inspection-card">
+          <span class="skill-inspection-icon" aria-hidden="true"><SkillFav domain={skillInspection.site_domain} size={22} /></span>
+          <span class="skill-inspection-copy">
+            <span>
+              <b>{skillInspection.name}</b>
+              {#if skillInspection.site_domain}<span class="skill-domain">{skillInspection.site_domain}</span>{/if}
+              <em>{skillVersion(skillInspection.version)}</em>
+            </span>
+            <small>{skillInspection.description || '这个技能没有提供说明。'}</small>
+          </span>
+        </section>
+
+        <div class="skill-inspection-facts" aria-label="技能包检查结果">
+          <span><small>包内文件</small><b>{skillInspection.file_count} 个</b></span>
+          <span><small>展开大小</small><b>{formatSkillBytes(skillInspection.unpacked_bytes)}</b></span>
+          <span><small>可执行内容</small><b>{skillInspection.has_scripts ? '包含脚本' : '无脚本'}</b></span>
+          <span><small>内容摘要</small><code title={skillInspection.sha256}>{compactDigest(skillInspection.sha256)}</code></span>
+        </div>
+
+        {#if sameInstalledSkill(skillInspection)}
+          <div class="skill-import-notice success">这个技能包已安装，内容与当前版本一致。</div>
+        {:else if skillInspection.already_installed}
+          <div class="skill-import-notice warning">已安装同名技能。确认后将更新技能文件，并保留当前启用状态。</div>
+        {/if}
+        {#if skillInspection.has_scripts}
+          <div class="skill-import-notice warning">这个技能包含有可执行脚本。脚本只会在任务需要时由本地 AI 请求运行，仍受 Pilot 的操作批准设置约束。</div>
+        {/if}
+        {#if skillImportError}<div class="skill-import-failure inline" role="alert">{skillImportError}</div>{/if}
+        <p class="skill-import-note">导入只会安装技能，不会自动创建 GCMS、Cloudflare 或远程服务器连接。</p>
+      {/if}
+    </div>
+    <footer class="skill-import-footer">
+      <button class="btn ghost" type="button" onclick={() => void chooseSkillPackage(skillImportKind)} disabled={skillInspecting || skillInstalling}>重新选择</button>
+      <span></span>
+      <button class="btn ghost" type="button" onclick={closeSkillImport} disabled={skillInspecting || skillInstalling}>取消</button>
+      {#if skillInspection}
+        <button class="btn primary" type="button" onclick={() => void installSkillPackage()} disabled={skillInstalling || sameInstalledSkill(skillInspection)}>
+          {skillInstalling ? '安装中…' : sameInstalledSkill(skillInspection) ? '已安装' : skillInspection.already_installed ? '更新技能' : '导入并启用'}
+        </button>
+      {/if}
+    </footer>
   </div>
 {/if}
 
@@ -14834,10 +15606,10 @@
   </div>
 {/if}
 
-<!-- 远程服务器安装与管理 GCMS -->
+<!-- GCMS 服务器 -->
 {#if gcmsInstallOpen}
   <div class="mask" role="presentation" onclick={closeGcmsCurrentLayer}></div>
-  <div class="sheet gcms-install-sheet" use:sheetWidth={SHEET_WIDTH.gcmsInstall} role="dialog" aria-modal="true" aria-label="安装与管理 GCMS">
+  <div class="sheet gcms-install-sheet" use:sheetWidth={SHEET_WIDTH.gcmsInstall} role="dialog" aria-modal="true" aria-label="GCMS 服务器">
     <header class="sheet-head">
       {#if gcmsAccess}
         <div class="gcms-sheet-title">
@@ -14874,7 +15646,7 @@
         <div class="gcms-sheet-title">
           <span class="gcms-title-ic">{@render gcmsInstallIcon(17)}</span>
           <div>
-            <b>安装与管理 gcms</b>
+            <b>GCMS 服务器</b>
             <small>
               <span>远程服务器</span>
               <span
@@ -15377,7 +16149,7 @@
           {/if}
         </div>
       {:else}
-      <div class="sec-head gcms-sec-head"><span>服务器 · {sshServers.length}</span><button class="icon-btn" onclick={() => void refreshGcmsServers()} disabled={gcmsChecking} data-tip="重新检测全部服务器">{@render refreshIcon(gcmsChecking)}</button></div>
+      <div class="sec-head gcms-sec-head"><span>服务器 · {sshServers.length}</span><button class="icon-btn" onclick={() => void refreshGcmsServers()} disabled={gcmsChecking} data-tip="检测全部服务器 · 将依次读取 SSH 凭据">{@render refreshIcon(gcmsChecking)}</button></div>
       {#if sshServers.length === 0}
         <div class="gcms-empty">
           <span class="gcms-empty-ic">{@render sshMark(22)}</span>
@@ -15501,7 +16273,7 @@
                 {#if !assistantAccessConfigured && !pilotAssistant}
                   <p class="gcms-assistant-prerequisite">
                     <span aria-hidden="true">{@render botIcon(11)}</span>
-                    <span>设置访问域名后，可将 Pilot 运营助手一键导入当前 Pilot</span>
+                    <span>设置访问域名后，可将 Pilot 运营助手连接到当前 Pilot</span>
                   </p>
                 {:else}
                   <button
@@ -15510,7 +16282,7 @@
                     class:unavailable={!assistantReady}
                     class:disconnected={!assistantAccessConfigured && !!pilotAssistant}
                     data-tip={gcmsAssistantImportTip(state.status, !!pilotAssistant)}
-                    aria-label={!assistantAccessConfigured ? '修复 Pilot 运营助手访问域名' : pilotAssistant ? '更新 Pilot 运营助手' : '导入 Pilot 运营助手'}
+                    aria-label={!assistantAccessConfigured ? '修复 Pilot 运营助手访问域名' : pilotAssistant ? '同步 Pilot 运营助手权限' : '连接 Pilot 运营助手'}
                     disabled={assistantImporting}
                     onclick={() => {
                       if (!assistantAccessConfigured) { openGcmsAccess(c, state.status!); return; }
@@ -15518,11 +16290,11 @@
                     }}
                   >
                     <span class="gcms-assistant-icon">{@render botIcon(13)}</span>
-                    <span class="gcms-assistant-copy"><b>Pilot 运营助手</b><small>{!assistantAccessConfigured ? '连接不可用 · 已保留导入记录' : pilotAssistant ? '已在当前 Pilot · 同步最新权限' : '全站运营权限 · 仅当前 Pilot'}</small></span>
+                    <span class="gcms-assistant-copy"><b>Pilot 运营助手</b><small>{!assistantAccessConfigured ? '连接不可用 · 已保留连接记录' : pilotAssistant ? '已连接当前 Pilot · 同步最新权限' : '全站运营权限 · 等待连接'}</small></span>
                     {#if assistantAccessConfigured && pilotAssistant}
                       <span class="gcms-assistant-verb icon-only" aria-hidden="true">{@render refreshIcon(assistantImporting)}</span>
                     {:else}
-                      <span class="gcms-assistant-verb">{assistantImporting ? '处理中…' : !assistantAccessConfigured ? '修复访问域名' : '一键导入'}</span>
+                      <span class="gcms-assistant-verb">{assistantImporting ? '处理中…' : !assistantAccessConfigured ? '修复访问域名' : '连接助手'}</span>
                     {/if}
                   </button>
                 {/if}
@@ -15567,6 +16339,9 @@
               {:else if state.status}
                 <p class="gcms-missing">未检测到官方标准目录，可以直接安装；不会覆盖其他路径下的文件。</p>
                 <div class="gcms-card-actions"><button class="btn sm primary gcms-install-btn" onclick={() => void installRemoteGcms(c)}>一键安装</button><button class="btn sm ghost bare" onclick={() => void probeRemoteGcms(c.id)}>重新检测</button></div>
+              {:else}
+                <p class="gcms-missing">尚未连接检测。查看服务器列表不会读取钥匙串。</p>
+                <div class="gcms-card-actions"><button class="btn sm ghost" onclick={() => void probeRemoteGcms(c.id)}>检测这台服务器</button></div>
               {/if}
 
               {#if migratedInstances.length}
@@ -16819,10 +17594,10 @@
 <!-- 连接 Cloudflare -->
 {#if sshOpen}
   <div class="mask" role="presentation" onclick={() => (sshOpen = false)}></div>
-  <div class="modal wide" use:dialogGeometry={DIALOG_GEOMETRY.ssh} role="dialog" aria-modal="true" aria-label={sshEditId ? '编辑远程连接' : '新建远程连接'}>
-    <header class="sheet-head"><b>{sshEditId ? '编辑远程连接' : '新建远程连接'}</b><button class="x" onclick={() => (sshOpen = false)}>×</button></header>
+  <div class="modal wide ssh-modal" use:dialogGeometry={DIALOG_GEOMETRY.ssh} role="dialog" aria-modal="true" aria-label={sshCredentialRepair ? '补录远程连接密码' : sshEditId ? '编辑远程连接' : '新建远程连接'}>
+    <header class="sheet-head"><b>{sshCredentialRepair ? '补录远程连接密码' : sshEditId ? '编辑远程连接' : '新建远程连接'}</b><button class="x" onclick={() => (sshOpen = false)}>×</button></header>
     <div class="sheet-body">
-      <p class="hint">{#if sshEditId}改完地址 / 用户 / 认证方式后要重新「测试连接」核对指纹再保存；只改名字可以直接保存。密码 / 私钥口令留空＝沿用 {keystoreName} 里已存的那条。{:else}SSH 到一台远程机器：能开终端、管文件、让 AI 帮你干活。密码 / 私钥口令只进 {keystoreName}，绝不落盘。{/if}</p>
+      <p class="hint">{#if sshCredentialRepair}这条连接的密码已不在 {keystoreName} 中。输入一次密码并测试连接，保存后会自动恢复终端和文件列表。{:else if sshEditId}改完地址 / 用户 / 认证方式后要重新「测试连接」核对指纹再保存；只改名字可以直接保存。密码 / 私钥口令留空＝沿用 {keystoreName} 里已存的那条。{:else}SSH 到一台远程机器：能开终端、管文件、让 AI 帮你干活。密码 / 私钥口令只进 {keystoreName}，绝不落盘。{/if}</p>
       <div class="trow">
         <div class="tfield" style="flex:2"><span>主机</span><input class="tin" bind:value={sshF.host} placeholder="例如 1.2.3.4 或 server.example.com" spellcheck="false" autocapitalize="off" autocorrect="off" /></div>
         <div class="tfield" style="flex:1"><span>端口</span><input class="tin" type="number" bind:value={sshF.port} placeholder="22" /></div>
@@ -16832,7 +17607,7 @@
         <div class="tfield"><span>认证方式</span><Dropdown bind:value={sshF.auth} options={sshAuthOpts} /></div>
       </div>
       {#if sshF.auth === 'password'}
-        <div class="tfield"><span>密码{#if sshEditId && sshF0.auth === 'password'}（留空＝不改）{/if}</span><input class="tin" type="password" bind:value={sshF.password} autocomplete="off" placeholder={sshEditId && sshF0.auth === 'password' ? '不改就别填' : ''} /></div>
+        <div class="tfield"><span>密码{#if sshEditId && sshF0.auth === 'password' && !sshCredentialRepair}（留空＝不改）{/if}</span><input class="tin" type="password" bind:value={sshF.password} autocomplete="off" placeholder={sshCredentialRepair ? '请输入这条连接的密码' : sshEditId && sshF0.auth === 'password' ? '不改就别填' : ''} /></div>
       {:else}
         <div class="tfield"><span>私钥文件（只记住路径，不会拷贝你的私钥）</span>
           <div class="ssh-key-row">
@@ -16944,6 +17719,10 @@
         <button class="ctx-item" role="menuitem" onclick={() => openMkdir(r.path)}>在这里新建文件夹</button>
       {/if}
       <div class="ctx-div"></div>
+      <button class="ctx-item" role="menuitem" onclick={() => copySftpEntry(r)}>复制</button>
+      {#if r.dir && !r.link && sftpClipboard}
+        <button class="ctx-item" role="menuitem" onclick={() => pasteSftpEntry(r.path)} disabled={!!sftpXfer || sftpClipboard.connId !== sftpConnId}>粘贴到这里</button>
+      {/if}
       <button class="ctx-item" role="menuitem" onclick={() => copyPath(r.path)}>复制路径</button>
       <button class="ctx-item" role="menuitem" onclick={() => openRename(r)}>重命名…</button>
       <div class="ctx-div"></div>
@@ -16952,6 +17731,9 @@
       <button class="ctx-item" role="menuitem" onclick={() => openMkdir()}>新建文件夹</button>
       <button class="ctx-item" role="menuitem" onclick={() => sftpUpload()} disabled={!!sftpXfer}>上传文件…</button>
       <div class="ctx-div"></div>
+      {#if sftpClipboard}
+        <button class="ctx-item" role="menuitem" onclick={() => pasteSftpEntry()} disabled={!!sftpXfer || sftpClipboard.connId !== sftpConnId}>粘贴</button>
+      {/if}
       <button class="ctx-item" role="menuitem" onclick={() => copyPath(sftpPath)}>复制当前路径</button>
       <button class="ctx-item" role="menuitem" onclick={sftpRefresh}>刷新</button>
     {/if}
@@ -17651,6 +18433,8 @@
      终端独占/无对话时不加，保持齐边。 */
   .term-wrap.with-chat { z-index: 1; box-shadow: 0 6px 12px -6px rgba(20, 16, 13, .4); }
   .term-connecting { position: absolute; left: 14px; top: 12px; display: flex; align-items: center; gap: 7px; color: #8b857c; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
+  .term-credential-repair { position: absolute; left: 14px; top: 12px; border: 1px solid rgba(248, 113, 113, .35); border-radius: 7px; background: rgba(127, 29, 29, .3); color: #fca5a5; padding: 6px 9px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
+  .term-credential-repair:hover { background: rgba(153, 27, 27, .42); color: #fecaca; }
   .tc-spin { width: 9px; height: 9px; border: 1.5px solid #4b4640; border-top-color: #8b857c; border-radius: 50%; animation: spin .7s linear infinite; }
   .term { width: 100%; height: 100%; }
   /* xterm 6 的滚动条是**自绘**的（.xterm-scrollable-element > .scrollbar，从 VS Code 移植），
@@ -17672,7 +18456,10 @@
   .rseg-btn { border: 0; background: transparent; color: var(--dim); font-size: 12.5px; padding: 4px 14px; border-radius: 6px; cursor: pointer; }
   .rseg-btn.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
   /* 远程文件面板（工作台右栏；宽度由 wb.filesW 内联给） */
-  .files-wrap { flex: none; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
+  .files-wrap { position: relative; flex: none; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
+  .files-drop-overlay { position: absolute; inset: 8px; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--bg) 92%, var(--accent)); color: var(--text); pointer-events: none; box-shadow: 0 8px 28px rgba(0,0,0,.12); }
+  .files-drop-overlay b { font-size: 14px; font-weight: 650; }
+  .files-drop-overlay small { max-width: 88%; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   /* 单开时吃满整宽（撤掉固定宽 flex:none）；左边没东西了，左边框也去掉。 */
   .files-wrap.solo { flex: 1; min-width: 0; border-left: 0; }
   .files-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
@@ -17909,7 +18696,6 @@
   .railnav.on { background: #e9e7e0; color: var(--text); font-weight: 550; }
   .railnav:disabled { opacity: .45; cursor: default; }
   .railnav svg { flex: none; }
-
   .convos { flex: 1; overflow-y: auto; padding: 2px 8px 8px; display: flex; flex-direction: column; gap: 1px; border-top: 1px solid transparent; transition: border-color .15s; }
   .convos > button.site-grp:first-of-type { padding-top: 3px; margin-top: 0; }
   .convos.scrolled { border-top-color: rgba(30, 25, 15, 0.07); }
@@ -17970,8 +18756,13 @@
     position: absolute; left: 8px; right: 8px; bottom: calc(100% + 4px); z-index: 40;
     background: #fff; border: 1px solid var(--border2); border-radius: 12px;
     box-shadow: 0 10px 30px rgba(30,25,15,.15); padding: 5px;
+    display: flex; flex-direction: column; max-height: min(640px, calc(100vh - 86px)); overflow: hidden;
     animation: pop .1s ease-out;
   }
+  .cs-scroll {
+    min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+  }
+  .cs-actions { flex: none; }
   .cs-item {
     width: 100%; display: flex; align-items: center; gap: 9px;
     background: none; border: none; border-radius: 8px; padding: 5.5px 9px; cursor: pointer; text-align: left; font: inherit;
@@ -18016,6 +18807,7 @@
     font: inherit; font-size: 12.5px; line-height: 1.3; color: var(--dim);
   }
   .cs-act:hover { background: #f4f3ef; color: var(--text); }
+  .cs-act.on { background: #efeee9; color: var(--text); font-weight: 550; }
   .cs-act :global(svg) { color: var(--faint); flex: none; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
   .dot.ok { background: #16a34a; } .dot.warn { background: #d97706; } .dot.off { background: #cfccc4; }
@@ -18301,6 +19093,72 @@
   .th-info small { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; color: var(--dim); font-size: 12px; margin-top: 2px; }
   .btag { display: inline-flex; align-items: center; gap: 4px; }
   .thread { flex: 1; overflow-y: auto; }
+  .skill-head-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+  .skill-head-actions .btn { min-height: 29px; padding: 5px 10px; }
+  .skill-import-menu-wrap { position: relative; }
+  .skill-import-trigger > svg:last-child { margin-left: 1px; color: var(--faint); transition: transform .14s ease; }
+  .skill-import-trigger[aria-expanded="true"] > svg:last-child { transform: rotate(180deg); }
+  .skill-import-menu { position: absolute; z-index: 90; top: calc(100% + 6px); right: 0; width: 226px; display: grid; gap: 2px; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-shadow: 0 14px 36px rgb(27 26 23 / 15%); }
+  .skill-import-menu > button { width: 100%; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+  .skill-import-menu > button:hover, .skill-import-menu > button:focus-visible { outline: none; background: var(--soft); }
+  .skill-import-menu > button > svg { color: var(--dim); }
+  .skill-import-menu > button > span { min-width: 0; display: grid; gap: 2px; }
+  .skill-import-menu b { font-size: 11.5px; font-weight: 600; }
+  .skill-import-menu small { overflow: hidden; color: var(--faint); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .skill-chat-center { padding-inline: 24px; }
+  .skill-chat-launcher { width: min(680px, 100%); }
+  .skill-chat-heading { display: grid; grid-template-columns: 46px minmax(0, 1fr); align-items: start; gap: 13px; margin-bottom: 20px; }
+  .skill-chat-heading h1 { margin: 0 0 5px; text-align: left; }
+  .skill-chat-heading .sub { margin: 0; max-width: none; text-align: left; }
+  .skill-chat-mark { width: 46px; height: 46px; display: grid; place-items: center; border-radius: 13px; background: var(--soft); color: var(--dim); }
+  .skill-chat-loading { min-height: 140px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--dim); font-size: 12.5px; }
+  .skill-chat-empty { display: grid; justify-items: start; gap: 7px; padding: 18px; border: 1px dashed var(--border2); border-radius: 13px; background: rgba(255,255,255,.5); }
+  .skill-chat-empty b { font-size: 14px; }
+  .skill-chat-empty p { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.55; }
+  .skill-chat-empty > div { display: flex; gap: 7px; margin-top: 5px; }
+  .skill-chat-composer { width: 100%; }
+  .skill-picker-inline { min-width: 0; max-width: 270px; display: inline-flex; align-items: center; gap: 2px; color: var(--dim); }
+  .skill-picker-inline-icon { flex: none; display: inline-flex; color: var(--faint); }
+  .skill-picker-inline :global(.dd-trigger.compact) { max-width: 205px; padding-inline: 5px; }
+  .skill-picker-inline em { flex: none; padding: 1px 5px; border-radius: 999px; background: var(--soft); color: var(--faint); font-size: 9px; font-style: normal; font-weight: 600; line-height: 1.4; white-space: nowrap; }
+  .skill-bound-chip { min-width: 0; display: inline-flex; align-items: center; gap: 6px; color: var(--dim); }
+  .skill-bound-chip :global(svg) { flex: none; }
+  .skill-bound-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .skill-session-domain { flex: none; padding: 1px 5px; border: 1px solid #ddd8cd; border-radius: 999px; background: var(--soft); color: var(--dim); font-size: 9px; font-weight: 550; line-height: 1.4; white-space: nowrap; }
+  .skill-bound-chip em, .skill-lock-label { flex: none; padding: 1px 5px; border-radius: 999px; background: var(--soft); color: var(--faint); font-size: 9px; font-style: normal; font-weight: 600; line-height: 1.4; }
+  .skill-bound-placeholder { color: var(--faint); font-size: 10.5px; }
+  .skill-inner { box-sizing: border-box; width: min(860px, 100%); min-height: 100%; margin: 0 auto; padding: 20px 24px 32px; }
+  .skill-page-state { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 180px; color: var(--dim); font-size: 12.5px; }
+  .skill-page-state.error { box-sizing: border-box; min-height: 0; margin: 4px 0; padding: 13px 14px; justify-content: flex-start; flex-wrap: wrap; border: 1px solid #e8c6bd; border-radius: 11px; background: var(--err-soft); color: var(--err); }
+  .skill-page-state.error b { flex: none; }
+  .skill-page-state.error span { flex: 1 1 260px; min-width: 0; }
+  .skill-empty { padding-top: min(15vh, 130px); }
+  .skill-empty .btn { margin-top: 18px; }
+  .skill-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 14px; margin: 0 2px 12px; color: var(--dim); font-size: 11.5px; }
+  .skill-summary > span { white-space: nowrap; }
+  .skill-summary b { color: var(--text); font-size: 12.5px; }
+  .skill-summary small { flex: 1 1 300px; color: var(--faint); font-size: 10.5px; text-align: right; }
+  .skill-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
+  .skill-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 15px; border: 1px solid var(--border); border-radius: 13px; background: var(--card); box-shadow: var(--shadow-sm); transition: border-color .15s, opacity .15s; }
+  .skill-card:hover { border-color: #d5d0c6; }
+  .skill-card.disabled { opacity: .68; }
+  .skill-card-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; background: var(--soft); color: var(--dim); }
+  .skill-card-copy { min-width: 0; display: grid; gap: 4px; }
+  .skill-card-title { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+  .skill-card-title b { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
+  .skill-domain { flex: none; padding: 2px 7px; border: 1px solid #ddd8cd; border-radius: 999px; background: var(--soft); color: var(--dim); font-size: 9.5px; font-weight: 550; line-height: 1.35; white-space: nowrap; }
+  .skill-card-title em { flex: none; color: var(--faint); font-size: 10.5px; font-style: normal; }
+  .skill-card-description { overflow: hidden; color: var(--dim); font-size: 11.5px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+  .skill-card-meta { display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 10px; }
+  .skill-card-meta i { font-style: normal; }
+  .skill-card-meta code { overflow: hidden; max-width: 120px; color: inherit; font-size: 9.5px; text-overflow: ellipsis; }
+  .skill-card-control { display: grid; grid-template-columns: auto auto; align-items: center; justify-items: end; gap: 5px 9px; }
+  .skill-card-control .switch { grid-row: 1 / span 2; grid-column: 2; }
+  .skill-enabled-label { color: var(--dim); font-size: 10.5px; white-space: nowrap; }
+  .skill-risk { padding: 2px 6px; border-radius: 999px; background: #fff3dd; color: #9a610d; font-size: 9.5px; font-style: normal; font-weight: 650; line-height: 1.3; }
+  .skill-card .switch:disabled { cursor: wait; opacity: .55; }
+  .skill-filter-empty { min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: var(--faint); font-size: 12px; }
+  .skill-filter-empty :global(svg) { opacity: .72; }
   .thread-inner { max-width: 760px; margin: 0 auto; padding: 22px 24px 8px; display: flex; flex-direction: column; gap: 20px; }
 
   .msg { display: flex; gap: 12px; }
@@ -19692,6 +20550,13 @@
   .task-settings-trigger.active { background: #ebe8e1; color: var(--text); }
 
   .modal.wide { width: min(520px, 94vw); }
+  /* 远程连接表单只需要纵向滚动。可缩放后的浮点像素取整会让 WebKit 偶发把
+     正文判定为横向溢出 1px，Windows WebView2 的原生滚动条也会因此出现。
+     收窄到这个弹窗处理，避免影响确实需要横向滚动的文件/日志视图。 */
+  .modal.ssh-modal > .sheet-body { min-width: 0; overflow-x: hidden; }
+  .modal.ssh-modal .trow,
+  .modal.ssh-modal .tfield,
+  .modal.ssh-modal .ssh-key-row { max-width: 100%; }
   .trow { display: flex; gap: 12px; }
   .tfield { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
   .tfield > span { font-size: 12px; color: var(--dim); }
@@ -19990,6 +20855,39 @@
   .sheet-head { box-sizing: border-box; min-height: 48px; display: flex; justify-content: space-between; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--border); }
   .sheet-head > b { min-width: 0; overflow: hidden; font-size: 13.5px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
   .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+  .skill-import-sheet { background: #fbfaf7; }
+  .skill-import-head { gap: 12px; }
+  .skill-import-title { min-width: 0; display: flex; align-items: center; gap: 9px; }
+  .skill-import-title-icon { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: var(--soft); color: var(--dim); }
+  .skill-import-title > span:last-child { min-width: 0; display: grid; gap: 2px; }
+  .skill-import-title b, .skill-import-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .skill-import-title b { font-size: 13.5px; line-height: 1.2; }
+  .skill-import-title small { color: var(--faint); font-size: 9.5px; }
+  .skill-import-body { flex: 1 1 auto; min-height: 0; gap: 12px; padding: 18px; }
+  .skill-import-progress { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 190px; color: var(--dim); }
+  .skill-import-progress > span:last-child { display: grid; gap: 2px; }
+  .skill-import-progress b { color: var(--text); font-size: 12.5px; }
+  .skill-import-progress small { color: var(--faint); font-size: 10.5px; }
+  .skill-import-failure { display: grid; gap: 4px; padding: 12px 13px; border: 1px solid #e8c6bd; border-radius: 10px; background: var(--err-soft); color: var(--err); font-size: 11.5px; line-height: 1.5; }
+  .skill-import-failure.inline { padding: 9px 11px; }
+  .skill-inspection-card { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: 11px; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: #fff; box-shadow: var(--shadow-sm); }
+  .skill-inspection-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 11px; background: var(--soft); color: var(--dim); }
+  .skill-inspection-copy { min-width: 0; display: grid; gap: 4px; }
+  .skill-inspection-copy > span { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+  .skill-inspection-copy b { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .skill-inspection-copy em { flex: none; color: var(--faint); font-size: 10.5px; font-style: normal; }
+  .skill-inspection-copy small { color: var(--dim); font-size: 11px; line-height: 1.45; }
+  .skill-inspection-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: var(--border); }
+  .skill-inspection-facts > span { min-width: 0; display: grid; gap: 3px; padding: 10px 11px; background: #fff; }
+  .skill-inspection-facts small { color: var(--faint); font-size: 9.5px; }
+  .skill-inspection-facts b, .skill-inspection-facts code { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .skill-import-notice { padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--soft); color: var(--dim); font-size: 10.5px; line-height: 1.55; }
+  .skill-import-notice.success { border-color: #cce1d2; background: #edf7f0; color: var(--ok); }
+  .skill-import-notice.warning { border-color: #ecd9a0; background: #fdf6e3; color: #8f6400; }
+  .skill-import-note { margin: 0; color: var(--faint); font-size: 10.5px; line-height: 1.55; }
+  .skill-import-note code { color: var(--dim); font-size: 10px; }
+  .skill-import-footer { flex: none; display: flex; align-items: center; gap: 8px; padding: 11px 17px; border-top: 1px solid var(--border); background: #fff; }
+  .skill-import-footer > span { flex: 1; }
   :global(.modal[data-dialog-geometry="true"] > .sheet-head) { flex: none; user-select: none; }
   :global(.modal[data-dialog-geometry="true"] > .sheet-head[data-dialog-dragging="true"]) { cursor: grabbing !important; }
   :global(.modal[data-dialog-resizable="true"] > .sheet-body) { flex: 1 1 auto; min-width: 0; min-height: 0; }
@@ -21343,6 +22241,7 @@
   .theme-footer,
   .deployment-footer,
   .quick-site-footer,
+  .skill-import-footer,
   .update-center-footer,
   .gcms-migration-footer,
   .ed-footer,
@@ -21356,6 +22255,7 @@
   .theme-footer .btn,
   .deployment-footer .btn,
   .quick-site-footer .btn,
+  .skill-import-footer .btn,
   .update-center-footer .btn,
   .gcms-migration-footer .btn,
   .ed-footer .btn,
@@ -21373,6 +22273,14 @@
     font-size: 11.5px;
   }
   @media (max-width: 760px) {
+    .skill-chat-center { padding-inline: 14px; }
+    .skill-picker-inline { max-width: min(240px, 48vw); }
+    .skill-inner { padding-inline: 14px; }
+    .skill-summary small { flex-basis: 100%; text-align: left; }
+    .skill-card { grid-template-columns: 34px minmax(0, 1fr); padding: 12px; }
+    .skill-card-icon { width: 34px; height: 34px; }
+    .skill-card-control { grid-column: 2; grid-template-columns: auto auto 34px; justify-content: start; justify-items: start; }
+    .skill-card-control .switch { grid-row: auto; grid-column: 3; }
     .sites-page { padding: 14px 14px 24px; }
     .sites-global-popover { position: fixed; top: 52px; right: 12px; width: min(430px, calc(100vw - 24px)); }
     .sites-global-popover-grid, .sites-grid { grid-template-columns: 1fr; }
