@@ -2177,28 +2177,49 @@
     return () => clearInterval(timer);
   });
   // 连接切换器里每条连接的右键菜单（新窗口打开 / 编辑 / 删除）。
-  let connCtx = $state<null | { x: number; y: number; conn: Connection }>(null);
+  let connCtx = $state<null | { x: number; y: number; conn: Connection; ready: boolean }>(null);
+  let connCtxMenuEl = $state<HTMLDivElement | null>(null);
   // 删除确认期间保留连接切换器与右键菜单，让用户始终看得见操作来源；
   // 取消后仍回到原菜单，确认后才由 removeConn 主动收起右键菜单。
   let connCtxConfirmPinned = $state(false);
-  function openConnCtx(e: MouseEvent, c: Connection) {
+  async function settleConnCtxMenu(connId: string, anchor?: { top: number; bottom: number; right: number }) {
+    await tick();
+    if (!connCtx || connCtx.conn.id !== connId || !connCtxMenuEl) return;
+    const menuRect = connCtxMenuEl.getBoundingClientRect();
+    const pad = 8;
+    const x = anchor
+      ? Math.max(pad, Math.min(anchor.right - menuRect.width, window.innerWidth - menuRect.width - pad))
+      : Math.max(pad, Math.min(connCtx.x, window.innerWidth - menuRect.width - pad));
+    const y = anchor
+      ? anchor.bottom + 5 + menuRect.height <= window.innerHeight - pad
+        ? anchor.bottom + 5
+        : Math.max(pad, anchor.top - menuRect.height - 5)
+      : Math.max(pad, Math.min(connCtx.y, window.innerHeight - menuRect.height - pad));
+    connCtx = { ...connCtx, x, y, ready: true };
+  }
+  async function openConnCtx(e: MouseEvent, c: Connection) {
     e.preventDefault();
     e.stopPropagation(); // 别让全局那个输入框右键菜单也跳出来
-    connCtx = { x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 150), conn: c };
+    hideTip();
+    connCtx = { x: e.clientX, y: e.clientY, conn: c, ready: false };
+    await settleConnCtxMenu(c.id);
   }
-  function toggleConnCtx(e: MouseEvent, c: Connection) {
+  async function toggleConnCtx(e: MouseEvent, c: Connection) {
     e.preventDefault();
     e.stopPropagation();
+    hideTip();
     if (connCtx?.conn.id === c.id) {
       connCtx = null;
       return;
     }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     connCtx = {
-      x: Math.max(12, Math.min(rect.right - 180, window.innerWidth - 192)),
-      y: Math.min(rect.bottom + 5, window.innerHeight - 150),
+      x: rect.right - 180,
+      y: rect.bottom + 5,
       conn: c,
+      ready: false,
     };
+    await settleConnCtxMenu(c.id, { top: rect.top, bottom: rect.bottom, right: rect.right });
   }
   function openPilotBinding(c: Connection) {
     connCtx = null;
@@ -2263,13 +2284,22 @@
     if (!connCtx) return;
     const close = () => { if (!connCtxConfirmPinned) connCtx = null; };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !connCtxConfirmPinned) connCtx = null; };
+    const onScroll = (e: Event) => {
+      const target = e.target;
+      if (target instanceof Node && connCtxMenuEl?.contains(target)) return;
+      close();
+    };
     window.addEventListener('click', close);
     window.addEventListener('contextmenu', close);
     window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', close);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('contextmenu', close);
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', close);
     };
   });
   async function openConnWindow(id: string) {
@@ -17692,7 +17722,7 @@
 {#if connCtx}
   <!-- 连接切换器的右键菜单。菜单项按连接类型给：能做的才列，做不了的不摆在那儿灰着。 -->
   {@const c = connCtx.conn}
-  <div class="ctx-menu fctx" style="left:{connCtx.x}px; top:{connCtx.y}px" role="menu" tabindex="-1">
+  <div bind:this={connCtxMenuEl} class="ctx-menu fctx conn-ctx-menu" class:ready={connCtx.ready} style="left:{connCtx.x}px; top:{connCtx.y}px" role="menu" tabindex="-1">
     <button class="ctx-item" role="menuitem" onclick={() => openConnWindow(c.id)}>新窗口打开</button>
     {#if c.kind === 'ssh'}
       <button class="ctx-item" role="menuitem" onclick={() => { switcherOpen = false; selectConn(c.id); openRemote(); }}>远程终端</button>
@@ -18875,7 +18905,9 @@
   .flash { position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 1200; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-app-region: no-drag; }
   .flash.err { max-height: 42vh; overflow-x: hidden; overflow-y: auto; }
   /* 自定义右键菜单（替换 WKWebView 默认英文菜单） */
-  .ctx-menu { position: fixed; z-index: 120; min-width: 148px; background: #fff; border: 1px solid var(--border); border-radius: 11px; box-shadow: 0 12px 32px rgba(30,25,15,.16); padding: 5px; animation: pop .1s ease-out; }
+  .ctx-menu { position: fixed; z-index: 120; min-width: 148px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-x: hidden; overflow-y: auto; background: #fff; border: 1px solid var(--border); border-radius: 11px; box-shadow: 0 12px 32px rgba(30,25,15,.16); padding: 5px; animation: pop .1s ease-out; }
+  .conn-ctx-menu { visibility: hidden; }
+  .conn-ctx-menu.ready { visibility: visible; }
   .ctx-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 18px; background: none; border: none; border-radius: 7px; padding: 6px 10px; font: inherit; font-size: 13px; color: var(--text); cursor: pointer; text-align: left; }
   .ctx-item:hover:not(:disabled) { background: #f1efe9; }
   .ctx-item:disabled { color: var(--faint); cursor: default; }
