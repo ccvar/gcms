@@ -6366,8 +6366,9 @@
     }
     return rows;
   }
-  // 会话大小/用量：上下文按「厂商 + 模型」估算——codex 272k；Grok 4.5 / 4.6 500k（ACP initialize
-  // 的 totalContextTokens 实测值）。Claude 当前 Sonnet / Opus / Fable 是 1M；
+  // 会话大小/用量：上下文按「厂商 + 模型」估算——Codex 暂以缓存默认窗口 272k 估算，
+  // 并非模型容量或当前会话确认值（Astra 缓存另有 max_context_window=872000）；Grok 4.5 / 4.6 500k
+  //（ACP initialize 的 totalContextTokens 实测值）。Claude 当前 Sonnet / Opus / Fable 是 1M；
   // Haiku 4.5 仍是 200k。旧版或无法识别的自定义 Claude ID 保守按 200k。
   //
   // ★ 加新模型时**必须同时改这里**，否则它会掉进最后那个 200k 兜底 —— 用量百分比、
@@ -6385,7 +6386,8 @@
   //（如 Max 订阅跑 Sonnet 实际 1M），按下一档 1M 计；展示百分比由调用方钳 100%。
   function ctxLimitAdaptive(brain: string, model: string, ctx: number): number {
     const base = ctxLimit(brain, model);
-    if (brain === 'claude' && model.toLowerCase().includes('haiku')) return base;
+    // Codex/Grok 的占用接近默认值，不足以证明窗口已扩展到 1M。
+    if (brain !== 'claude' || model.toLowerCase().includes('haiku')) return base;
     return base < 1_000_000 && ctx > base * 0.95 ? 1_000_000 : base;
   }
   // 拖动窗口：忽略交互元素（按钮/输入等），否则点它们会误触发拖动。
@@ -12084,6 +12086,9 @@
   // 型号取自本机 codex 模型清单，会随厂商更新；要用别的新模型走下方「自定义模型 ID」。
   const CODEX_MODELS = [
     { value: '', label: '跟随 Codex 默认', sub: '用本地 codex 配置' },
+    // 菜单展示官方模型容量；不要把 Codex 缓存默认窗口当成模型上限。
+    // https://developers.openai.com/api/docs/models/gpt-6-astra
+    { value: 'gpt-6-astra', label: 'GPT-6 Astra', sub: '最新旗舰 · 1.05M 模型上下文' },
     // GPT-5.6 三分档（2026-07 GA）：裸 "gpt-5.6" 在 ChatGPT 订阅通道会被拒，必须用分档 ID；
     // 且要求 codex CLI ≥0.144（旧版报「requires a newer version of Codex」，升级 CLI 即可）。
     { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', sub: '最强 · 细节打磨' },

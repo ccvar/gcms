@@ -2671,8 +2671,12 @@ fn build_codex(
         }
         cmd.args(["-c", &format!("model={model}")]);
     }
-    // 思考等级（实测 0.144：-c model_reasoning_effort=low|medium|high）；空＝跟随 codex 默认。
-    if matches!(effort, "low" | "medium" | "high") {
+    // 思考等级：常规模型由前端只提供 low/medium/high；GPT-6 Astra 还提供
+    // xhigh/max/ultra。这里只透传白名单值，空值仍跟随 Codex 默认。
+    if matches!(
+        effort,
+        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    ) {
         cmd.args(["-c", &format!("model_reasoning_effort={effort}")]);
     }
     // `-` 让 Codex 从 stdin 读完整提示词。不要把 prompt 直接作为参数：Windows 的
@@ -3529,6 +3533,10 @@ mod tests {
             validate_codex_model("gpt-5.6-sol").unwrap(),
             Some("gpt-5.6-sol".into())
         );
+        assert_eq!(
+            validate_codex_model("gpt-6-astra").unwrap(),
+            Some("gpt-6-astra".into())
+        );
         assert!(validate_codex_model("--bad").is_err());
         assert!(validate_codex_model("bad model").is_err());
         assert_eq!(codex_sandbox(PermMode::Plan), "read-only");
@@ -3801,6 +3809,30 @@ mod tests {
             .iter()
             .all(|arg| !arg.contains('\r') && !arg.contains('\n')));
         assert!(first_stdin.contains("系统规则第二行\n\n——\n用户：用户第一行"));
+
+        let (astra, _) = build_codex(
+            &conn,
+            "gpt-6-astra",
+            "ultra",
+            "",
+            true,
+            None,
+            "处理复杂任务",
+            "",
+            ".",
+            PermMode::Auto,
+            None,
+        )
+        .unwrap();
+        let astra_args: Vec<String> = astra
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(astra_args.iter().any(|arg| arg == "model=gpt-6-astra"));
+        assert!(astra_args
+            .iter()
+            .any(|arg| arg == "model_reasoning_effort=ultra"));
 
         let (resume, resume_stdin) = build_codex(
             &conn,

@@ -25,7 +25,7 @@
   // 弹卡打开时传空文案＝action 即刻隐藏且不再触发。
   const tipText = $derived(
     pct > 0
-      ? `上下文 ${pct}% · ${fmtTok(ctx)} / ${fmtTok(limit)}${total > 0 ? ` · 累计 ${fmtTok(total)}` : ''}`
+      ? `上下文估算 ${pct}% · ${fmtTok(ctx)} / ${fmtTok(limit)}${total > 0 ? ` · 累计 ${fmtTok(total)}` : ''}`
       : total > 0 ? `累计 ${fmtTok(total)} tokens` : '本地用量',
   );
 
@@ -106,8 +106,9 @@
   {#if open}
     <div class="ur-card" style={cardStyle} data-no-drag>
       {#if pct > 0}
-        <div class="ur-sec">上下文窗口<span class="ur-sub">{fmtTok(ctx)} / {fmtTok(limit)}（{pct}%）</span></div>
+        <div class="ur-sec">上下文估算<span class="ur-sub">{fmtTok(ctx)} / {fmtTok(limit)}（{pct}%）</span></div>
         <div class="ur-bar"><span class="ur-fill" class:warn style="width:{Math.max(3, pct)}%"></span></div>
+        <div class="ur-total">按默认窗口估算，实际窗口以执行器为准。</div>
       {/if}
       {#if total > 0}<div class="ur-total">本会话累计 {fmtTok(total)} tokens</div>{/if}
       {#if pct > 0 || total > 0}<div class="ur-div"></div>{/if}

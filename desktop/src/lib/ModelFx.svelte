@@ -35,7 +35,8 @@
    * 不同执行器的原生 effort 档位并不相同，滑杆必须按当前模型动态展示：
    * Claude Code: low / medium / high / xhigh / max
    * Grok CLI: none / minimal / low / medium / high / xhigh / max
-   * Codex 目前仍只向兼容的本地 CLI 暴露 low / medium / high。
+   * Codex 常规模型: low / medium / high
+   * GPT-6 Astra（Codex 通道）: low / medium / high / xhigh / max / ultra
    */
   const CLAUDE_STOPS: Stop[] = [
     ...BASE_STOPS,
@@ -52,9 +53,16 @@
     { v: 'xhigh', l: '极高', d: '扩展推理' },
     { v: 'max', l: '最高', d: '最大推理 · 最慢' },
   ];
+  const CODEX_ASTRA_STOPS: Stop[] = [
+    ...BASE_STOPS,
+    { v: 'xhigh', l: '极高', d: '扩展推理' },
+    { v: 'max', l: '最高', d: '最大推理' },
+    { v: 'ultra', l: '极致', d: '自动委派 · 最深推理' },
+  ];
   const brain = $derived(value.includes('::') ? value.slice(0, value.indexOf('::')) : '');
+  const model = $derived(value.includes('::') ? value.slice(value.indexOf('::') + 2) : value);
   const brainName = $derived(brain === 'claude' ? 'Claude' : brain === 'grok' ? 'Grok' : brain === 'codex' ? 'Codex' : '模型');
-  const stops = $derived(brain === 'claude' ? CLAUDE_STOPS : brain === 'grok' ? GROK_STOPS : BASE_STOPS);
+  const stops = $derived(brain === 'claude' ? CLAUDE_STOPS : brain === 'grok' ? GROK_STOPS : brain === 'codex' && model === 'gpt-6-astra' ? CODEX_ASTRA_STOPS : BASE_STOPS);
 
   let open = $state(false);
   let root = $state<HTMLElement>();
