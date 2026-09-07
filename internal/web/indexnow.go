@@ -75,6 +75,27 @@ func (s *Server) indexNowEnabled() bool {
 	return strings.TrimSpace(s.store.Setting(indexNowEnabledSetting)) != "0"
 }
 
+// indexNowPublicBaseURL follows the same domain decision as the site card's
+// "official site" link. Platform admin hosts are control-plane addresses and
+// must never be used to prove ownership of a site's public URLs.
+func (s *Server) indexNowPublicBaseURL(r *http.Request) string {
+	if s.platform != nil && s.platformSiteID > 0 {
+		resolver := s
+		if s.rootServer != nil {
+			resolver = s.rootServer
+		}
+		if base := resolver.sitePublicBaseURL(s.platformSiteID); base != "" {
+			return base
+		}
+	}
+	// Single-site Cloudflare deployments have no platform site card, but their
+	// published primary host is still the canonical public endpoint.
+	if host := s.cloudflarePublishedPrimaryHost(); host != "" {
+		return "https://" + host
+	}
+	return s.publicBaseURL(r)
+}
+
 func buildIndexNowURL(endpoint, pageURL, key string) string {
 	q := url.Values{}
 	q.Set("url", pageURL)
@@ -102,7 +123,7 @@ func (s *Server) indexNowContentURLs(r *http.Request, p *store.Post) []string {
 	if p == nil || !indexNowPostSupported(s, p) {
 		return nil
 	}
-	base := s.publicBaseURL(r)
+	base := s.indexNowPublicBaseURL(r)
 	if isLocalBaseURL(base) {
 		return nil
 	}
@@ -280,6 +301,12 @@ func (s *Server) runIndexNowForSite() {
 		}
 		return
 	}
+	if migrated, migrateErr := s.rebaseIndexNowPlatformURLs(items); migrateErr != nil {
+		log.Printf("indexnow: 迁移平台域名队列失败: %v", migrateErr)
+		return
+	} else if migrated > 0 {
+		log.Printf("indexnow: 已将 %d 条平台域名 URL 迁移到站点正式域名", migrated)
+	}
 	key, err := s.indexNowKey()
 	if err != nil {
 		log.Printf("indexnow: 读取/生成 key 失败: %v", err)
@@ -323,6 +350,60 @@ func (s *Server) runIndexNowForSite() {
 	} else {
 		_ = s.store.SetSetting(indexNowLastErrorSetting, time.Now().Format("2006-01-02 15:04:05")+" "+lastError)
 	}
+}
+
+// rebaseIndexNowPlatformURLs repairs URLs queued by older releases which used
+// the platform admin host (for example cms.example.com) instead of the current
+// site's official domain. Only that exact control-plane host is migrated, so
+// legitimate notifications for an old public domain remain intact during a
+// real domain migration.
+func (s *Server) rebaseIndexNowPlatformURLs(items []*store.IndexNowQueueItem) (int, error) {
+	if s.platform == nil || len(items) == 0 {
+		return 0, nil
+	}
+	source, err := url.Parse(strings.TrimSpace(s.platformBaseURL))
+	if err != nil || source.Hostname() == "" {
+		return 0, nil
+	}
+	target, err := url.Parse(s.indexNowPublicBaseURL(nil))
+	if err != nil || target.Hostname() == "" || sameCloudflareDNSName(source.Hostname(), target.Hostname()) {
+		return 0, nil
+	}
+	replacements := map[string]string{}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		parsed, parseErr := url.Parse(item.URL)
+		if parseErr != nil || !sameCloudflareDNSName(parsed.Hostname(), source.Hostname()) {
+			continue
+		}
+		parsed.Scheme = target.Scheme
+		if parsed.Scheme == "" {
+			parsed.Scheme = "https"
+		}
+		parsed.Host = target.Host
+		newURL := parsed.String()
+		if newURL != item.URL {
+			replacements[item.URL] = newURL
+		}
+	}
+	migrated, err := s.store.RebaseIndexNowQueueURLs(replacements)
+	if err != nil {
+		return 0, err
+	}
+	if migrated > 0 {
+		for _, item := range items {
+			if item != nil {
+				if newURL := replacements[item.URL]; newURL != "" {
+					item.URL = newURL
+					item.Attempts = 0
+					item.LastError = ""
+				}
+			}
+		}
+	}
+	return migrated, nil
 }
 
 func (s *Server) runIndexNowBatch(items []*store.IndexNowQueueItem, key string) (int, bool, string) {
@@ -380,7 +461,7 @@ func (s *Server) indexNowSitemapURLs(r *http.Request) ([]string, error) {
 	if r == nil {
 		return nil, fmt.Errorf("缺少站点请求上下文")
 	}
-	req := r.Clone(r.Context())
+	req := r.Clone(withPublicBase(r.Context(), s.indexNowPublicBaseURL(r)))
 	req.Method = http.MethodGet
 	req.URL.Path = "/sitemap.xml"
 	req.URL.RawQuery = ""

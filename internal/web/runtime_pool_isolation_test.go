@@ -100,3 +100,57 @@ func TestReloadRuntimePoolIsolatesBrokenSiteAndKeepsHealthySitesServing(t *testi
 		t.Fatalf("admin runtime error missing: %#v", view.PlatformRuntimeErrors)
 	}
 }
+
+func TestChildRuntimePlatformMetadataReusesRootRuntimePool(t *testing.T) {
+	fixture := setupControlSitesFixture(t)
+	pool := fixture.server.runtimePool()
+	memberRuntime, memberOK := pool.runtimeByID(fixture.memberSite.ID)
+	otherRuntime, otherOK := pool.runtimeByID(fixture.otherSite.ID)
+	if !memberOK || memberRuntime == nil || memberRuntime.server == nil ||
+		!otherOK || otherRuntime == nil || otherRuntime.server == nil || otherRuntime.Store == nil {
+		t.Fatal("site runtimes missing")
+	}
+	child := memberRuntime.server
+	if child.runtimePool() != nil {
+		t.Fatal("child runtime unexpectedly owns a runtime pool")
+	}
+	if child.platformRuntimePool() != pool {
+		t.Fatal("child runtime did not resolve the platform root pool")
+	}
+
+	if err := memberRuntime.Store.SetSetting(cloudflareDomainsKey, encodeCloudflareDomains([]CloudflareDomain{{Host: "member.example.test", Primary: true}})); err != nil {
+		t.Fatalf("set member Cloudflare domain: %v", err)
+	}
+	memberRuntime.server.writeCloudflareStatus(CloudflareStatus{Status: "success", Published: true})
+	if err := otherRuntime.Store.SetSetting(cloudflareDomainsKey, encodeCloudflareDomains([]CloudflareDomain{{Host: "other.example.test", Primary: true}})); err != nil {
+		t.Fatalf("set other Cloudflare domain: %v", err)
+	}
+	otherRuntime.server.writeCloudflareStatus(CloudflareStatus{Status: "success", Published: true})
+	if err := otherRuntime.Store.SetSetting("site.favicon", "/uploads/other-icon.svg"); err != nil {
+		t.Fatalf("set other favicon: %v", err)
+	}
+
+	// 隐藏磁盘路径后，只有复用根池中已打开的 Store 才能读取图标；旧逻辑会尝试
+	// 对每个站点重新 os.Stat/store.Open，并在这里得到空结果。
+	movedDB := fixture.otherSite.DBPath + ".moved"
+	if err := os.Rename(fixture.otherSite.DBPath, movedDB); err != nil {
+		t.Fatalf("temporarily hide other site database: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := os.Stat(movedDB); err == nil {
+			_ = os.Rename(movedDB, fixture.otherSite.DBPath)
+		}
+	})
+
+	view := &View{}
+	child.populatePlatformSites(view)
+	if got := view.PlatformSiteIcons[fixture.otherSite.ID]; got != "/admin/sites/"+strconv.FormatInt(fixture.otherSite.ID, 10)+"/uploads/other-icon.svg" {
+		t.Fatalf("other site icon from child runtime = %q", got)
+	}
+	if got := view.PlatformOfficialURLs[fixture.otherSite.ID]; got != "https://other.example.test/" {
+		t.Fatalf("other site official URL from child runtime = %q", got)
+	}
+	if got := view.PlatformOfficialURLs[fixture.memberSite.ID]; got != "https://member.example.test/" {
+		t.Fatalf("member site official URL from child runtime = %q", got)
+	}
+}

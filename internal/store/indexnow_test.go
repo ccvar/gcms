@@ -51,3 +51,40 @@ func TestIndexNowQueueCoalescesAndRetries(t *testing.T) {
 		t.Fatalf("history=%+v err=%v", history, err)
 	}
 }
+
+func TestIndexNowQueueRebaseCoalescesExistingTarget(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC().Truncate(time.Second)
+	oldURL := "https://cms.example.com/en/posts/one/"
+	newURL := "https://www.example.com/en/posts/one/"
+	if err := st.EnqueueIndexNow(oldURL, "initial_sync", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RetryIndexNow([]string{oldURL}, now.Add(time.Minute), "403"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnqueueIndexNow(newURL, "update", now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := st.RebaseIndexNowQueueURLs(map[string]string{oldURL: newURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated != 1 {
+		t.Fatalf("migrated=%d want 1", migrated)
+	}
+	if count, _ := st.IndexNowQueueCount(); count != 1 {
+		t.Fatalf("queue count=%d want 1", count)
+	}
+	due, err := st.DueIndexNow(now.Add(3*time.Minute), 10)
+	if err != nil || len(due) != 1 {
+		t.Fatalf("due=%+v err=%v", due, err)
+	}
+	if due[0].URL != newURL || due[0].Attempts != 0 || due[0].LastError != "" {
+		t.Fatalf("rebased item=%+v", due[0])
+	}
+}

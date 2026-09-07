@@ -426,7 +426,7 @@ func (s *Server) legacyAdminI18NRaw(key string) string {
 	if v := strings.TrimSpace(s.store.Setting(key)); v != "" {
 		return v
 	}
-	if pool := s.runtimePool(); pool != nil && pool.defaultSite != nil && pool.defaultSite.Store != nil && pool.defaultSite.Store != s.store {
+	if pool := s.platformRuntimePool(); pool != nil && pool.defaultSite != nil && pool.defaultSite.Store != nil && pool.defaultSite.Store != s.store {
 		return strings.TrimSpace(pool.defaultSite.Store.Setting(key))
 	}
 	return ""
@@ -539,16 +539,16 @@ func (s *Server) authed(v *View, sess session) {
 	// 「查看」已发布内容：站点绑了正式域名（或 CF 已发布）就开真实地址——预览通道只是
 	// 没有正式入口时的替身；单站部署前缀为空，相对路径本来就是真实地址。
 	v.AdminViewPrefix = v.AdminPreviewPrefix
-	if base := s.adminSitePublicBaseURL(sess.currentSiteID); base != "" {
+	if base := s.sitePublicBaseURL(sess.currentSiteID); base != "" {
 		v.AdminViewPrefix = base
 	}
 	v.AdminSiteURL = s.adminSiteURL(sess.currentSiteID, v.EditLang)
 	s.populatePlatformSites(v)
 }
 
-// adminSitePublicBaseURL 站点的正式对外入口（不带末尾斜杠）：Cloudflare 已发布取官方域名，
+// sitePublicBaseURL 站点的正式对外入口（不带末尾斜杠）：Cloudflare 已发布取官方域名，
 // 否则取已启用域名里的主域名（SiteDomains 排序主域名在前）。没有正式入口返回 ""。
-func (s *Server) adminSitePublicBaseURL(siteID int64) string {
+func (s *Server) sitePublicBaseURL(siteID int64) string {
 	if href, host := s.platformOfficialSiteURL(siteID); href != "" && host != "" {
 		return strings.TrimRight(href, "/")
 	}
@@ -628,6 +628,10 @@ func (s *Server) populatePlatformSites(v *View) {
 	if v == nil || s.platform == nil {
 		return
 	}
+	// 子站后台由 cloneForRuntime 创建，运行时池只保存在平台根 Server 上。
+	// 必须回溯根池复用已经打开的 Store；使用 s.runtimePool() 会在子站克隆上得到 nil，
+	// 随后 platformSiteIconURL 为每个站点重新 Open 数据库，令所有后台页面线性变慢。
+	pool := s.platformRuntimePool()
 	sites, err := s.platform.Sites()
 	if err != nil {
 		return
@@ -638,7 +642,7 @@ func (s *Server) populatePlatformSites(v *View) {
 	v.PlatformOfficialURLs = map[int64]string{}
 	v.PlatformOfficialHosts = map[int64]string{}
 	v.PlatformRuntimeErrors = map[int64]string{}
-	if pool := s.runtimePool(); pool != nil {
+	if pool != nil {
 		for siteID, failure := range pool.failures {
 			v.PlatformRuntimeErrors[siteID] = failure.Detail
 		}
@@ -686,7 +690,7 @@ func (s *Server) platformOfficialSiteURL(siteID int64) (string, string) {
 		return "", ""
 	}
 	siteServer := s
-	if rt, ok := s.runtimePool().runtimeByID(siteID); ok && rt != nil {
+	if rt, ok := s.platformRuntimePool().runtimeByID(siteID); ok && rt != nil {
 		if site == nil {
 			site = rt.Site
 		}
@@ -725,7 +729,7 @@ func (s *Server) platformSiteIconURL(siteID int64) string {
 			site = loaded
 		}
 	}
-	if rt, ok := s.runtimePool().runtimeByID(siteID); ok && rt != nil && rt.Store != nil {
+	if rt, ok := s.platformRuntimePool().runtimeByID(siteID); ok && rt != nil && rt.Store != nil {
 		raw = strings.TrimSpace(rt.Store.Setting("site.favicon"))
 		uploadDir = strings.TrimSpace(rt.UploadDir)
 	}
@@ -4984,7 +4988,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Settings.IndexNowLastError = s.store.Setting(indexNowLastErrorSetting)
 		v.Settings.IndexNowPending, _ = s.store.IndexNowQueueCount()
 		if key := strings.TrimSpace(s.store.Setting(indexNowKeySetting)); key != "" {
-			v.Settings.IndexNowKeyURL = absWithBase(s.publicBaseURL(r), "/"+key+".txt")
+			v.Settings.IndexNowKeyURL = absWithBase(s.indexNowPublicBaseURL(r), "/"+key+".txt")
 		}
 		records, _ := s.store.ListIndexNowSubmissions(50)
 		for _, record := range records {
@@ -5043,7 +5047,7 @@ func (s *Server) adminIndexNowSync(w http.ResponseWriter, r *http.Request) {
 		s.showSettings(w, r, "indexnow", "", "请先开启 IndexNow。")
 		return
 	}
-	if isLocalBaseURL(s.publicBaseURL(r)) {
+	if isLocalBaseURL(s.indexNowPublicBaseURL(r)) {
 		s.showSettings(w, r, "indexnow", "", "当前站点没有可公开访问的正式域名，暂不能提交。")
 		return
 	}

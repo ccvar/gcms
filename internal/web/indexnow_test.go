@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"testing"
 	"time"
 
+	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/store"
 )
 
@@ -75,6 +77,65 @@ func TestRunIndexNowBatchesByHostAndRecordsHistory(t *testing.T) {
 	history, err := s.store.ListIndexNowSubmissions(10)
 	if err != nil || len(history) != 2 || !history[0].Success || history[0].StatusCode != http.StatusAccepted {
 		t.Fatalf("history = %+v, err=%v", history, err)
+	}
+}
+
+func TestIndexNowUsesOfficialNonCloudflareDomainAndRepairsPlatformQueue(t *testing.T) {
+	s, _ := newTestAutomationServer(t, "posts:read")
+	ps, err := platform.Open(filepath.Join(t.TempDir(), "system.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ps.Close() })
+	site, err := ps.CreateSite("blockvar", "BlockVar", "", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ps.AddSiteDomain(site.ID, "https", "blockvar.com", true, false); err != nil {
+		t.Fatal(err)
+	}
+	s.platform = ps
+	s.platformSiteID = site.ID
+	s.platformBaseURL = "https://cms.ccvar.com"
+	s.baseURL = "https://cms.ccvar.com"
+	s.cloudflareStatusFile = filepath.Join(t.TempDir(), "cloudflare-deploy.json")
+	if got := s.indexNowPublicBaseURL(httptest.NewRequest(http.MethodGet, "https://cms.ccvar.com/admin/settings/indexnow", nil)); got != "https://blockvar.com" {
+		t.Fatalf("IndexNow base URL = %q, want blockvar.com", got)
+	}
+	if err := s.store.SetSetting(indexNowEnabledSetting, "1"); err != nil {
+		t.Fatal(err)
+	}
+	key := "0123456789abcdef0123456789abcdef"
+	if err := s.store.SetSetting(indexNowKeySetting, key); err != nil {
+		t.Fatal(err)
+	}
+	oldURL := "https://cms.ccvar.com/en/posts/a/"
+	if err := s.store.EnqueueIndexNow(oldURL, "initial_sync", time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var payload indexNowBatchPayload
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer endpoint.Close()
+	oldEndpoint, oldClient := indexNowEndpoint, indexNowHTTPClient
+	indexNowEndpoint, indexNowHTTPClient = endpoint.URL, endpoint.Client()
+	defer func() { indexNowEndpoint, indexNowHTTPClient = oldEndpoint, oldClient }()
+
+	s.runIndexNowForSite()
+	wantURL := "https://blockvar.com/en/posts/a/"
+	if payload.Host != "blockvar.com" || payload.KeyLocation != "https://blockvar.com/"+key+".txt" || len(payload.URLList) != 1 || payload.URLList[0] != wantURL {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if count, _ := s.store.IndexNowQueueCount(); count != 0 {
+		t.Fatalf("queue count=%d want 0", count)
+	}
+	history, err := s.store.ListIndexNowSubmissions(10)
+	if err != nil || len(history) != 1 || history[0].URL != wantURL || !history[0].Success {
+		t.Fatalf("history=%+v err=%v", history, err)
 	}
 }
 

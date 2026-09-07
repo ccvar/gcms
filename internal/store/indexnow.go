@@ -127,6 +127,60 @@ func (s *Store) RetryIndexNow(urls []string, availableAt time.Time, message stri
 	return tx.Commit()
 }
 
+// RebaseIndexNowQueueURLs atomically replaces stale queue URLs while preserving
+// their original scheduling metadata. A collision with an already-correct URL
+// is coalesced into one fresh delivery attempt.
+func (s *Store) RebaseIndexNowQueueURLs(replacements map[string]string) (int, error) {
+	if len(replacements) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	insert, err := tx.Prepare(`
+		INSERT INTO indexnow_queue(url,reason,attempts,available_at,last_error,created_at,updated_at)
+		SELECT ?,reason,0,available_at,'',created_at,? FROM indexnow_queue WHERE url=?
+		ON CONFLICT(url) DO UPDATE SET
+			reason=excluded.reason,
+			attempts=0,
+			available_at=MIN(indexnow_queue.available_at,excluded.available_at),
+			last_error='',
+			created_at=MIN(indexnow_queue.created_at,excluded.created_at),
+			updated_at=excluded.updated_at`)
+	if err != nil {
+		return 0, err
+	}
+	defer insert.Close()
+	remove, err := tx.Prepare(`DELETE FROM indexnow_queue WHERE url=?`)
+	if err != nil {
+		return 0, err
+	}
+	defer remove.Close()
+	now := fmtTime(time.Now())
+	migrated := 0
+	for oldURL, newURL := range replacements {
+		if oldURL == "" || newURL == "" || oldURL == newURL {
+			continue
+		}
+		if _, err := insert.Exec(newURL, now, oldURL); err != nil {
+			return 0, err
+		}
+		result, err := remove.Exec(oldURL)
+		if err != nil {
+			return 0, err
+		}
+		if affected, _ := result.RowsAffected(); affected > 0 {
+			migrated += int(affected)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return migrated, nil
+}
+
 func (s *Store) IndexNowQueueCount() (int, error) {
 	var count int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM indexnow_queue`).Scan(&count)
