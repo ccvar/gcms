@@ -1,9 +1,11 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -192,6 +194,36 @@ func TestServeIndexNowKeyFile(t *testing.T) {
 		if s.serveIndexNowKeyFile(httptest.NewRecorder(), r) {
 			t.Fatalf("%s 不应命中 key 文件", path)
 		}
+	}
+}
+
+func TestStaticExportIncludesRootIndexNowKeyFile(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	key := "0123456789abcdef0123456789abcdef"
+	if err := s.store.SetSetting(indexNowKeySetting, key); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.exportStaticSite(context.Background(), CloudflareConfig{
+		DeployMode:   cloudflareModeWorkerAssets,
+		RoutePattern: "static.example.com/*",
+		WorkerName:   "gcms-static-example-com",
+		Domains:      []CloudflareDomain{{Host: "static.example.com", Primary: true}},
+	})
+	if err != nil {
+		t.Fatalf("export static site: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(result.Dir) })
+	keyPath := "/" + key + ".txt"
+	file, ok := result.Files[keyPath]
+	if !ok {
+		t.Fatalf("static export missing %s", keyPath)
+	}
+	body, err := os.ReadFile(file.DiskPath)
+	if err != nil {
+		t.Fatalf("read IndexNow key file: %v", err)
+	}
+	if string(body) != key || file.ContentType != "text/plain; charset=utf-8" {
+		t.Fatalf("IndexNow key export = %q (%s)", body, file.ContentType)
 	}
 }
 

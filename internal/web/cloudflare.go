@@ -3585,6 +3585,11 @@ func cloudflareWorkerScriptForConfig(cfg CloudflareConfig) string {
 	return fmt.Sprintf(`const BLOCKED_PREFIXES = ["/admin", "/api/admin", "/preview"];
 const RESERVED_PREFIXES = ["/assets", "/uploads", "/api", "/_gcms"];
 const RESERVED_PATHS = new Set(["/robots.txt", "/sitemap.xml", "/rss.xml", "/favicon.ico", "/_redirects", "/_worker.js"]);
+// GCMS generates 32-character lowercase hexadecimal IndexNow keys. Their
+// root-level verification files must reach the static asset binding directly;
+// sending them through locale routing turns /{key}.txt into /{lang}/{key}.txt
+// and makes ownership verification fail with HTTP 403.
+const INDEXNOW_KEY_PATH = /^\/[0-9a-f]{32}\.txt$/;
 const PRIMARY_HOST = %s;
 const REDIRECT_HOSTS = new Set(%s);
 const PUBLIC_HOSTS = new Set(%s);
@@ -3596,7 +3601,7 @@ function blocked(pathname) {
 }
 
 function reserved(pathname) {
-  return RESERVED_PATHS.has(pathname) || RESERVED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
+  return INDEXNOW_KEY_PATH.test(pathname) || RESERVED_PATHS.has(pathname) || RESERVED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
 }
 
 function normalizeLang(value) {

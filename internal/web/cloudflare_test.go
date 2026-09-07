@@ -769,6 +769,8 @@ func TestCloudflareWorkerScriptProtectsAdminAndServesAssets(t *testing.T) {
 		`const DEFAULT_LANG = "zh";`,
 		`Accept-Language`,
 		`localeRedirect`,
+		`const INDEXNOW_KEY_PATH = /^\/[0-9a-f]{32}\.txt$/;`,
+		`INDEXNOW_KEY_PATH.test(pathname)`,
 		`headers.Vary = "Accept-Language";`,
 		`typeof env.ASSETS.fetch`,
 		`status: 503`,
