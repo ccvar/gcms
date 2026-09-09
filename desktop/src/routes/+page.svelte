@@ -28,6 +28,7 @@
   import FileCodeEditor from '$lib/FileCodeEditor.svelte';
   import { inspectEditorText, serializeEditorText } from '$lib/fileEditor';
   import { MANAGED_PLAN_TIMEOUT_SECONDS, canApplyPlan, planElapsed, type PlanRun } from '$lib/managedPlan';
+  import { editMenuTarget } from '$lib/editMenu';
   import { PRESET_PROMPTS, loadUserPrompts, saveUserPrompts, newPromptId, type Prompt } from '$lib/prompts';
   import Dropdown from '$lib/Dropdown.svelte';
   import GaOverviewChart from '$lib/GaOverviewChart.svelte';
@@ -11961,8 +11962,10 @@
   // 看不到用户刚点过菜单，那正是它要防的）。见 lib.rs::show_edit_menu。
   // 启用态（没选中就灰掉复制等）也由系统自己管，不用我们猜。
   function onCtxMenu(e: MouseEvent) {
+    if (e.defaultPrevented) return; // Child-owned menus (files/connections) take precedence.
     e.preventDefault();
-    const t = e.target as HTMLElement;
+    const t = e.target instanceof Element ? e.target : e.target instanceof Node ? e.target.parentElement : null;
+    if (!t) return;
     const xterm = t.closest('.xterm');
     if (xterm && term) {
       // xterm 的选区画在 canvas 上，不属于 window.getSelection()：有选区时右键直接复制；
@@ -11975,12 +11978,13 @@
       }
       return;
     }
-    const editable = t.closest('textarea, input[type="text"], input:not([type])') as HTMLElement | null;
+    const target = editMenuTarget(t);
     const sel = window.getSelection()?.toString() ?? '';
-    if (!editable && !sel) return; // 空白处不出菜单
+    if (!target && !sel) return; // 空白处不出菜单
     // 先聚焦：原生「剪切/复制/粘贴」作用在**当前第一响应者**上，不聚焦就打空
-    if (editable) editable.focus();
-    void invoke('show_edit_menu', { editable: !!editable }).catch(() => {});
+    // Focus the editing host without resetting its selection or scrolling the modal.
+    if (target && document.activeElement !== target.element) target.element.focus({ preventScroll: true });
+    void invoke('show_edit_menu', { editable: target?.editable ?? false }).catch(() => {});
   }
 
   // ---------- 助手消息 Markdown 渲染 ----------
