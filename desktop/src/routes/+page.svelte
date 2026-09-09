@@ -27,6 +27,7 @@
   import { copyTargetName, fitFileMenu } from '$lib/sftpFiles';
   import FileCodeEditor from '$lib/FileCodeEditor.svelte';
   import { inspectEditorText, serializeEditorText } from '$lib/fileEditor';
+  import { MANAGED_PLAN_TIMEOUT_SECONDS, canApplyPlan, planElapsed, type PlanRun } from '$lib/managedPlan';
   import { PRESET_PROMPTS, loadUserPrompts, saveUserPrompts, newPromptId, type Prompt } from '$lib/prompts';
   import Dropdown from '$lib/Dropdown.svelte';
   import GaOverviewChart from '$lib/GaOverviewChart.svelte';
@@ -5142,6 +5143,15 @@
   let mwPlan = $state('');
   let mwLimit = $state(3);
   let mwGenBusy = $state(false);
+  let mwGenRun = $state<PlanRun | null>(null);
+  let mwGenError = $state('');
+  let mwGenNotice = $state('');
+  let mwPermitError = $state('');
+  let mwPermitSending = $state<string[]>([]);
+  const mwPlanPermits = $derived.by(() => pendingPermits.filter(p => p.conv === mwGenRun?.id));
+  const mwPlanLive = $derived.by(() => mwGenRun ? lives[mwGenRun.id] : undefined);
+  const mwPlanIdle = $derived.by(() => mwGenBusy && !!mwGenRun && nowTick - (mwPlanLive?.lastActivityAt ?? mwGenRun.startedAt) > 90_000);
+  const mwPlanActivity = $derived(mwPlanLive ? Object.values(mwPlanLive.activities).sort((a, b) => b.updatedAt - a.updatedAt)[0] : undefined);
   let mwBusy = $state(false);
   // 配套任务的厂商/模型/强度（默认取启动器当前偏好）+ 等级 + 每周 token 预算（0=不限）。
   let mwBrain = $state<string>('claude');
@@ -5211,6 +5221,8 @@
     });
   }
   function openManagedWizard() {
+    if (mwGenBusy) { mwOpen = true; mwMode = 'plan'; setMwStep(2); return; }
+    mwGenRun = null; mwGenError = ''; mwGenNotice = ''; mwPermitError = ''; mwPermitSending = [];
     mwOpen = true; mwMode = ''; mwStep = 1; mwPlan = ''; mwLimit = 3; mwGenBusy = false; mwBusy = false;
     mwSite = sites.find((s) => !managedOfConn.some((m) => m.site_slug === s.slug))?.slug ?? '';
     mwBrain = brainUsable(prefs.brain) ? prefs.brain : firstUsableBrain();
@@ -5293,27 +5305,110 @@
 先读站点资料、导航与近期内容摸清定位，然后输出：
 1) 站点定位与目标读者（两三句）；2) 3-5 个内容支柱（每个配 2-3 个具体选题方向）；
 3) 每周更新节奏建议（频率/语种）；4) 8-12 个 SEO 关键词方向（每个方向注明目标搜索意图与判断依据——面向哪类读者、解决什么问题、为何判断本站有机会）；5) 前 4 周的选题清单（标题级）。
-只输出计划本身，不要创建或修改任何内容。`;
-  // 生成计划＝后台开一个一次性对话跑摸底 prompt（auto 档：读站点数据自动放行；prompt 明令只读）。
-  // 拿最后一条助手消息填进可编辑 textarea；对话会留在侧栏可追溯。
+调查范围限制：只读取站点基本资料、导航，以及最多 10 篇近期内容的标题/摘要；不要遍历整站、截图、安装工具、修改环境或修复配置。
+尽量在 3 分钟内完成。缺失数据须注明假设；同一读取失败不要反复重试，给出基于已获得资料的计划。只输出计划本身，不要创建、修改或发布任何内容。`;
+  function stopMwPlan(reason = '用户已请求停止') {
+    if (!mwGenBusy || !mwGenRun) return;
+    mwGenRun.apply = false;
+    mwGenRun.stopReason ||= reason;
+  }
+  async function closeManagedWizard() {
+    if (mwBusy) return;
+    if (mwGenBusy && !mwGenRun?.stopReason) {
+      const confirmed = await confirmDialog('生成仍在运行，关闭向导将请求停止。已有过程记录会保留在侧栏对话中。', {
+        title: '停止生成并关闭？', confirmText: '停止并关闭', cancelText: '继续等待',
+      });
+      if (!confirmed) return;
+    }
+    stopMwPlan();
+    if (mwGenRun) mwGenRun.apply = false;
+    mwOpen = false;
+  }
+  async function viewMwPlanConversation() {
+    if (!mwGenRun) return;
+    mwGenRun.apply = false; // Viewing the conversation detaches automatic textarea writeback.
+    mwOpen = false;
+    await openConv(mwGenRun.id);
+  }
+  async function respondMwPlanPermit(id: string, allow: boolean) {
+    if (!mwPlanPermits.some(p => p.id === id) || mwPermitSending.includes(id) || mwGenRun?.stopReason) return;
+    mwPermitSending = [...mwPermitSending, id]; mwPermitError = '';
+    try {
+      await invoke('respond_permit', { id, allow });
+      respondedPermits.add(id);
+      pendingPermits = pendingPermits.filter(p => p.id !== id);
+    } catch (error) { mwPermitError = `确认未送达，请重试：${String(error)}`; }
+    finally { mwPermitSending = mwPermitSending.filter(value => value !== id); }
+  }
+  $effect(() => {
+    if (mwGenBusy && mwGenRun && (activeConnId !== mwGenRun.connId || mwSite !== mwGenRun.siteSlug)) {
+      stopMwPlan('站点或连接已切换，停止旧计划生成');
+    }
+  });
+  // Register the background conversation without switching away from the wizard.
+  // No full-permission fallback: any protected operation still needs an explicit decision.
   async function mwGenPlan() {
     if (!mwSite || mwGenBusy) return;
     if (!brainUsable(mwBrain as Brain)) { say('所选厂商未就绪，去设置里授权或换一个', 'err'); return; }
-    mwGenBusy = true;
+    mwGenBusy = true; mwGenError = ''; mwGenNotice = ''; mwPermitError = '';
     const site = sites.find((s) => s.slug === mwSite);
     const id = crypto.randomUUID();
+    const connId = activeConnId, brain = mwBrain as Brain, model = mwModel, effort = mwEffort;
+    const slug = mwSite, siteName = site?.name || slug;
+    const startedAt = Date.now(), now = Math.floor(startedAt / 1000);
+    mwGenRun = { id, connId, siteSlug: slug, initialPlan: mwPlan, startedAt, apply: true, stopReason: '', stopError: '', model: `${brain} · ${model}${effort ? ` · ${effort}` : ''}` };
+    const run = mwGenRun;
+    const optimistic: Conversation = {
+      id, conn_id: connId, conn_name: activeConn?.name || '', site_slug: slug, site_name: siteName,
+      site_slugs: [], site_names: [], skill_ids: [], task_type: 'free', brain, model, effort,
+      perm_mode: 'auto', session_ref: '', title: `生成 90 天计划 · ${siteName}`,
+      messages: [optimisticUser(MW_PLAN_PROMPT)], status: 'running', created_at: now, updated_at: now,
+    };
+    convos = [optimistic, ...convos];
+    lives[id] = { text: '', renderedText: '', tools: [], activities: {}, lastActivityAt: startedAt, error: '', failed: false, startedAt };
+    running[id] = connId;
+    const channel = makeChannel(id);
+    let cancelInFlight = false;
+    const timer = setInterval(() => {
+      if (Date.now() - startedAt >= MANAGED_PLAN_TIMEOUT_SECONDS * 1000 && !run.stopReason) {
+        run.apply = false; run.stopReason = '已达到 8 分钟上限';
+      }
+      // Keep retrying while startup has not yet registered the process. A false
+      // cancel result does not mean that the pending invocation has stopped.
+      if (run.stopReason && !cancelInFlight) {
+        cancelInFlight = true;
+        void invoke<boolean>('cancel_turn', { convId: id }).then(() => { run.stopError = ''; })
+          .catch(error => { run.stopError = `停止请求未送达，将重试：${String(error)}`; })
+          .finally(() => { cancelInFlight = false; });
+      }
+    }, 1000);
+    let completed: Conversation | null = null;
     try {
       const conv = await invoke<Conversation>('start_conversation', {
-        convId: id, connId: activeConnId, siteSlug: mwSite, siteName: site?.name || mwSite,
-        siteSlugs: [], siteNames: [], taskType: 'free', brain: mwBrain, model: mwModel,
-        permMode: 'auto', effort: mwEffort, fast: false, workspaceDir: '', skillIds: [], message: MW_PLAN_PROMPT, onEvent: makeChannel(id),
+        convId: id, connId, siteSlug: slug, siteName,
+        siteSlugs: [], siteNames: [], taskType: 'free', brain, model,
+        permMode: 'auto', effort, fast: false, workspaceDir: '', skillIds: [], message: MW_PLAN_PROMPT, onEvent: channel,
+        timeoutSeconds: MANAGED_PLAN_TIMEOUT_SECONDS,
       });
+      completed = conv;
       const last = [...conv.messages].reverse().find((x) => x.role === 'assistant' && !x.error && x.text.trim());
-      if (last) mwPlan = last.text.trim();
-      else say('没拿到计划文本——可在侧栏打开这条对话查看原因，或直接手写', 'err');
-      await refreshConvos();
-    } catch (e) { say(String(e), 'err'); }
-    finally { mwGenBusy = false; }
+      if (run.stopReason) mwGenNotice = `${run.stopReason}，任务已结束；未回填不完整计划。`;
+      else if (lives[id]?.failed) mwGenError = lives[id]?.error || '生成失败，请查看对话中的最后一个操作。';
+      else if (!last) mwGenError = '没有获得计划文本，请查看生成对话，或直接手写。';
+      else if (canApplyPlan(run, { open: mwOpen, connId: activeConnId, siteSlug: mwSite, plan: mwPlan, mode: mwMode })) {
+        mwPlan = last.text.trim(); mwGenNotice = '计划已生成并填入，可继续编辑。';
+      } else mwGenNotice = '计划已生成，未覆盖已修改或已离开的编辑区；请从生成对话中复制。';
+    } catch (e) { mwGenError = String(e); }
+    finally {
+      clearInterval(timer);
+      if (completed) convos = convos.map(conv => conv.id === id ? completed! : conv);
+      if (completed) endTurn(completed, id);
+      else void failTurn(mwGenError || '计划生成未完成', id).catch(() => {});
+      clearStructuredGcmsUnlock(id);
+      mwGenBusy = false;
+      // A slow history refresh must not keep the generation spinner alive.
+      void refreshConvos();
+    }
   }
   async function mwRefreshPromptDefaults() {
     mwPromptBusy = true; mwPromptError = '';
@@ -18263,11 +18358,11 @@
 
 <!-- 托管 · 先选方案，再进入彼此隔离的计划托管 / 增长托管向导 -->
 {#if mwOpen}
-  <div class="mask" role="presentation" onclick={() => !mwBusy && !mwGenBusy && (mwOpen = false)}></div>
+  <div class="mask" role="presentation" onclick={() => void closeManagedWizard()}></div>
   <div class="modal wide md-managed-wizard" use:dialogGeometry={DIALOG_GEOMETRY.managedWizard} role="dialog" aria-modal="true" aria-labelledby="managed-wizard-title">
     <header class="sheet-head">
       <b id="managed-wizard-title">{mwMode === 'growth' ? '增长托管' : mwMode === 'plan' ? '计划托管' : '托管一个站点'}{#if mwMode}<small class="dim"> · 第 {mwStep}/3 步</small>{/if}</b>
-      <button class="x" aria-label="关闭托管向导" onclick={() => (mwOpen = false)} disabled={mwBusy}>×</button>
+      <button class="x" aria-label="关闭托管向导" onclick={() => void closeManagedWizard()} disabled={mwBusy}>×</button>
     </header>
     <div class="sheet-body" bind:this={mwBodyEl}>
       {#if !mwMode}
@@ -18306,9 +18401,38 @@
           <textarea class="tin" rows="10" bind:value={mwPlan} placeholder="点下面「生成 90 天计划」让 AI 摸底站点后起草，或直接手写：定位/内容支柱/每周节奏/关键词方向/前 4 周选题…"></textarea>
         </div>
         <div class="md-genrow">
-          <button class="btn soft" onclick={mwGenPlan} disabled={mwGenBusy || !mwSite}>{#if mwGenBusy}<span class="wr-spin"></span>生成中（AI 正在摸底站点，约 1-3 分钟）…{:else}生成 90 天计划{/if}</button>
-          <span class="hint">生成过程只读取站点数据，不会改动内容；对话会留在侧栏可追溯。</span>
+          <button class="btn soft" onclick={mwGenPlan} disabled={mwGenBusy || !mwSite}>{#if mwGenBusy}<span class="wr-spin"></span>{mwGenRun?.stopReason ? '正在停止…' : '生成中…'}{:else}生成 90 天计划{/if}</button>
+          {#if mwGenRun}<button class="btn ghost" onclick={() => void viewMwPlanConversation()}>查看生成对话</button>{/if}
+          {#if mwGenBusy}<button class="btn ghost" onclick={() => stopMwPlan()} disabled={!!mwGenRun?.stopReason}>停止生成</button>{/if}
         </div>
+        <p class="hint">生成提示要求只读；具体权限能力取决于所选模型，需要确认的操作会显示在下方。过程记录保留在侧栏。最长运行 8 分钟，超时会请求停止。</p>
+        {#if mwGenBusy && mwGenRun}
+          <section class="md-plan-progress" aria-label="计划生成进度">
+            <div class="md-plan-progress-head"><b>{mwGenRun.stopReason ? '正在停止任务' : mwPlanPermits.length ? '等待你确认操作' : mwPlanActivity?.label || (mwPlanLive?.text ? '正在生成计划' : mwPlanLive?.tools.length ? '正在读取站点资料' : '正在连接模型')}</b><span>已用 {planElapsed(mwGenRun.startedAt, nowTick)}</span></div>
+            <small>{mwGenRun.model}</small>
+            {#if mwGenRun.stopReason}<p class="hint">{mwGenRun.stopReason}。正在等待进程退出，确认结束前不会启动重复任务。</p>
+            {:else if mwPlanIdle && !mwPlanPermits.length}<p class="md-plan-warn">超过 90 秒没有新进度。可能正在推理或等待模型/网络响应；可查看对话或停止后重试。</p>{/if}
+            {#each (mwPlanLive?.tools ?? []).slice(-3) as tool}
+              <div class="md-plan-tool"><b>{tool.label}</b><code>{tool.detail.slice(0, 500)}</code></div>
+            {/each}
+            {#if mwPlanLive?.text}<details><summary>查看实时输出（尚未完成）</summary><pre class="md-plan-output">{mwPlanLive.text.slice(-6000)}</pre></details>{/if}
+            {#if mwGenRun.stopError}<p class="err-note">{mwGenRun.stopError}</p>{/if}
+            {#each mwPlanPermits as p (p.id)}
+              <div class="permit-card" class:danger={p.dangerous}>
+                <div class="permit-head">需要确认：{permitDesc(p)}</div>
+                <p class="hint">{p.tool} · 请核对具体操作；如果涉及修改、发布或删除，请拒绝。本次仅需要读取资料。</p>
+                {#if p.cmd || p.arg}<code class="permit-cmd">{p.cmd || p.arg}</code>{/if}
+                <div class="permit-act">
+                  <button class="btn sm" disabled={mwPermitSending.includes(p.id) || !!mwGenRun.stopReason} onclick={() => void respondMwPlanPermit(p.id, false)}>拒绝</button>
+                  <button class="btn sm primary" disabled={mwPermitSending.includes(p.id) || !!mwGenRun.stopReason} onclick={() => void respondMwPlanPermit(p.id, true)}>批准此操作</button>
+                </div>
+              </div>
+            {/each}
+            {#if mwPermitError}<p class="err-note" role="alert">{mwPermitError}</p>{/if}
+          </section>
+        {/if}
+        {#if mwGenError}<div class="err-note" role="alert">{mwGenError}</div>{/if}
+        {#if mwGenNotice}<p class="hint" role="status">{mwGenNotice}</p>{/if}
         {@render mwPrecheckBlock()}
       {:else}
         <div class="md-model-grid">
@@ -18555,8 +18679,8 @@
           <button class="btn ghost" onclick={backToManagedModeChoice}>返回方案</button>
           <button class="btn primary" onclick={() => setMwStep(2)} disabled={!mwSite}>下一步</button>
         {:else if mwStep === 2}
-          <button class="btn ghost" onclick={() => setMwStep(1)}>上一步</button>
-          <button class="btn primary" onclick={() => void mwEnterStep3()}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button>
+          <button class="btn ghost" onclick={() => setMwStep(1)} disabled={mwGenBusy}>上一步</button>
+          <button class="btn primary" onclick={() => void mwEnterStep3()} disabled={mwGenBusy}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button>
         {:else}
           <button class="btn ghost" onclick={() => setMwStep(2)}>上一步</button>
           <button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain) || !mwFallbackValid}>{mwBusy ? '开启中…' : '确认并开启计划托管'}</button>
@@ -22275,6 +22399,15 @@
   .md-growth-opp-actions .link { color: var(--dim); font-size: 10.5px; }
   .md-growth-watch-tip { margin-right: auto; color: var(--faint); font-size: 9.5px; }
   .md-genrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; }
+  .md-plan-progress { border: 1px solid var(--border); border-radius: 10px; background: var(--rail); padding: 12px; display: grid; gap: 9px; }
+  .md-plan-progress-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12px; }
+  .md-plan-progress-head span, .md-plan-progress > small { color: var(--dim); font-size: 11px; overflow-wrap: anywhere; }
+  .md-plan-warn { margin: 0; color: var(--warn, #a57622); font-size: 12px; line-height: 1.5; }
+  .md-plan-tool { display: grid; gap: 3px; font-size: 11px; }
+  .md-plan-tool code { color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .md-plan-output { max-height: 180px; overflow: auto; margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+  .md-plan-progress summary { font-size: 12px; cursor: pointer; }
+  .md-plan-progress .permit-card { min-width: 0; margin: 0; }
   /* 向导按当前步骤内容自适应；只有第 3 步内容超过视口时才让正文滚动。 */
   .md-managed-wizard { height: fit-content; max-height: 88vh; overflow: hidden; }
   .md-managed-wizard .sheet-body { flex: 1 1 auto; min-height: 0; padding-bottom: 16px; }

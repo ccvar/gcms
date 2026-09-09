@@ -24,6 +24,7 @@ mod sftp_transfer;
 mod static_server;
 mod tasks;
 mod tools;
+mod turn_deadline;
 mod transfer;
 mod usage;
 
@@ -7786,6 +7787,7 @@ async fn start_conversation(
     skill_ids: Vec<String>,
     message: String,
     on_event: Channel<agent::TurnEvent>,
+    timeout_seconds: Option<u64>,
 ) -> Result<Conversation, String> {
     if conv_id.trim().is_empty() {
         return Err("会话 id 缺失".into());
@@ -7806,7 +7808,17 @@ async fn start_conversation(
     if message.trim().is_empty() {
         return Err("请先说点什么".into());
     }
-    create_conversation(
+    // Only callers requesting a bounded job get a deadline; normal chats and
+    // scheduled jobs retain their existing lifecycle. Do not drop run_turn on
+    // timeout: let its cancellation branch terminate the process tree and save history.
+    let deadline = timeout_seconds.map(|seconds| {
+        turn_deadline::TurnDeadline::start(
+            state.runs.clone(),
+            conv_id.clone(),
+            std::time::Duration::from_secs(seconds.clamp(60, 900)),
+        )
+    });
+    let result = create_conversation(
         state.conns.clone(),
         state.convos.clone(),
         state.runs.clone(),
@@ -7830,7 +7842,11 @@ async fn start_conversation(
         state.data_dir.clone(),
         state.ssh.clone(),
     )
-    .await
+    .await;
+    if deadline.as_ref().is_some_and(|guard| guard.expired()) {
+        return Err("本轮生成已超过时限并停止。过程记录保留在对话中，请检查模型连接或待确认操作后再重试。".into());
+    }
+    result
 }
 
 /// 新站真正创建出来后，把平台级建站会话绑定到它。
