@@ -402,9 +402,9 @@ func (s *Server) apiStatsTraffic(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, errCode, errMsg)
 		return
 	}
-	hostnames := s.googleAnalyticsHostnamesForSite(s.platformSiteID)
-	scopeHost := firstGoogleAnalyticsHostname(hostnames)
-	cacheKey := fmt.Sprintf("traffic|%s|%s|%d", in.Property, scopeHost, days)
+	scope := s.googleAnalyticsScopeForSite(in)
+	scopeHost := scope.host()
+	cacheKey := fmt.Sprintf("traffic|%s|%s|%d", in.Property, scope.cacheKey(), days)
 	if !fresh {
 		if payload, ok := s.statsCacheGet(cacheKey); ok {
 			writeJSON(w, http.StatusOK, payload)
@@ -416,7 +416,7 @@ func (s *Server) apiStatsTraffic(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadGateway, "google_auth_failed", err.Error())
 		return
 	}
-	sum, err := statsTrafficFetch(r.Context(), token, in.Property, hostnames, days)
+	sum, err := statsTrafficFetch(r.Context(), token, in.Property, scope, days)
 	if err != nil {
 		apiError(w, http.StatusBadGateway, "google_api_error", err.Error())
 		return
@@ -426,6 +426,8 @@ func (s *Server) apiStatsTraffic(w http.ResponseWriter, r *http.Request) {
 		"days":                     days,
 		"property":                 in.Property,
 		"scope_host":               scopeHost,
+		"scope_type":               scope.kind(),
+		"scope_stream_id":          scope.streamID(in.Property),
 		"active_users":             sum.ActiveUsers,
 		"sessions":                 sum.Sessions,
 		"engagement_rate":          sum.EngagementRate,
@@ -528,9 +530,8 @@ func googleSearchConsoleRowsRange(ctx context.Context, accessToken, siteURL stri
 	return rows, nil
 }
 
-// googleAnalyticsTrafficSummary GA4 runReport：days 参数化的流量与互动质量汇总
-// （googleAnalyticsSevenDaySummary 的一般化版本）。
-func googleAnalyticsTrafficSummary(ctx context.Context, accessToken, property string, hostnames []string, days int) (statsTrafficSummary, error) {
+// googleAnalyticsTrafficSummary GA4 runReport：按站点统计范围与天数读取流量和互动质量汇总。
+func googleAnalyticsTrafficSummary(ctx context.Context, accessToken, property string, scope googleAnalyticsReportScope, days int) (statsTrafficSummary, error) {
 	property = normalizeGoogleAnalyticsPropertyName(property)
 	if !validGoogleAnalyticsPropertyName(property) {
 		return statsTrafficSummary{}, errors.New("GA4 属性无效，无法读取统计数据")
@@ -544,7 +545,9 @@ func googleAnalyticsTrafficSummary(ctx context.Context, accessToken, property st
 			{"name": "averageSessionDuration"},
 		},
 	}
-	applyGoogleAnalyticsHostnameFilter(body, hostnames)
+	if err := scope.apply(body, property); err != nil {
+		return statsTrafficSummary{}, err
+	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return statsTrafficSummary{}, err
@@ -604,9 +607,9 @@ func (s *Server) apiStatsPages(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, errCode, errMsg)
 		return
 	}
-	hostnames := s.googleAnalyticsHostnamesForSite(s.platformSiteID)
-	scopeHost := firstGoogleAnalyticsHostname(hostnames)
-	cacheKey := fmt.Sprintf("pages|%s|%s|%d|%d", in.Property, scopeHost, days, limit)
+	scope := s.googleAnalyticsScopeForSite(in)
+	scopeHost := scope.host()
+	cacheKey := fmt.Sprintf("pages|%s|%s|%d|%d", in.Property, scope.cacheKey(), days, limit)
 	if !fresh {
 		if payload, ok := s.statsCacheGet(cacheKey); ok {
 			writeJSON(w, http.StatusOK, payload)
@@ -618,7 +621,7 @@ func (s *Server) apiStatsPages(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadGateway, "google_auth_failed", err.Error())
 		return
 	}
-	rows, err := statsPagesFetch(r.Context(), token, in.Property, hostnames, days, limit)
+	rows, err := statsPagesFetch(r.Context(), token, in.Property, scope, days, limit)
 	if err != nil {
 		apiError(w, http.StatusBadGateway, "google_api_error", err.Error())
 		return
@@ -626,14 +629,14 @@ func (s *Server) apiStatsPages(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []statsPageRow{}
 	}
-	payload := map[string]any{"ok": true, "days": days, "property": in.Property, "scope_host": scopeHost, "rows": rows}
+	payload := map[string]any{"ok": true, "days": days, "property": in.Property, "scope_host": scopeHost, "scope_type": scope.kind(), "scope_stream_id": scope.streamID(in.Property), "rows": rows}
 	s.statsCachePut(cacheKey, payload)
 	writeJSON(w, http.StatusOK, payload)
 }
 
 // googleAnalyticsPagesReport GA4 runReport：pagePath 维度 × 流量与互动质量，
 // 按活跃用户降序取前 limit 行。
-func googleAnalyticsPagesReport(ctx context.Context, accessToken, property string, hostnames []string, days, limit int) ([]statsPageRow, error) {
+func googleAnalyticsPagesReport(ctx context.Context, accessToken, property string, scope googleAnalyticsReportScope, days, limit int) ([]statsPageRow, error) {
 	property = normalizeGoogleAnalyticsPropertyName(property)
 	if !validGoogleAnalyticsPropertyName(property) {
 		return nil, errors.New("GA4 属性无效，无法读取统计数据")
@@ -650,7 +653,9 @@ func googleAnalyticsPagesReport(ctx context.Context, accessToken, property strin
 		"orderBys": []map[string]any{{"desc": true, "metric": map[string]string{"metricName": "activeUsers"}}},
 		"limit":    limit,
 	}
-	applyGoogleAnalyticsHostnameFilter(body, hostnames)
+	if err := scope.apply(body, property); err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return nil, err
@@ -726,9 +731,9 @@ func (s *Server) apiStatsAnalytics(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, errCode, errMsg)
 		return
 	}
-	hostnames := s.googleAnalyticsHostnamesForSite(s.platformSiteID)
-	scopeHost := firstGoogleAnalyticsHostname(hostnames)
-	cacheKey := fmt.Sprintf("analytics|%s|%s|%s|%d|%d", spec.Group, in.Property, scopeHost, days, limit)
+	scope := s.googleAnalyticsScopeForSite(in)
+	scopeHost := scope.host()
+	cacheKey := fmt.Sprintf("analytics|%s|%s|%s|%d|%d", spec.Group, in.Property, scope.cacheKey(), days, limit)
 	if !fresh {
 		if payload, ok := s.statsCacheGet(cacheKey); ok {
 			writeJSON(w, http.StatusOK, payload)
@@ -740,7 +745,7 @@ func (s *Server) apiStatsAnalytics(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadGateway, "google_auth_failed", err.Error())
 		return
 	}
-	report, err := statsAnalyticsFetch(r.Context(), token, in.Property, hostnames, spec, days, limit)
+	report, err := statsAnalyticsFetch(r.Context(), token, in.Property, scope, spec, days, limit)
 	if err != nil {
 		apiError(w, http.StatusBadGateway, "google_api_error", err.Error())
 		return
@@ -752,13 +757,15 @@ func (s *Server) apiStatsAnalytics(w http.ResponseWriter, r *http.Request) {
 		report.Rows = []statsAnalyticsRow{}
 	}
 	payload := map[string]any{
-		"ok":         true,
-		"days":       days,
-		"property":   in.Property,
-		"scope_host": scopeHost,
-		"group":      spec.Group,
-		"dimensions": report.Dimensions,
-		"rows":       report.Rows,
+		"ok":              true,
+		"days":            days,
+		"property":        in.Property,
+		"scope_host":      scopeHost,
+		"scope_type":      scope.kind(),
+		"scope_stream_id": scope.streamID(in.Property),
+		"group":           spec.Group,
+		"dimensions":      report.Dimensions,
+		"rows":            report.Rows,
 	}
 	s.statsCachePut(cacheKey, payload)
 	writeJSON(w, http.StatusOK, payload)
@@ -769,7 +776,7 @@ func (s *Server) apiStatsAnalytics(w http.ResponseWriter, r *http.Request) {
 func googleAnalyticsDimensionReport(
 	ctx context.Context,
 	accessToken, property string,
-	hostnames []string,
+	scope googleAnalyticsReportScope,
 	spec statsAnalyticsSpec,
 	days, limit int,
 ) (statsAnalyticsReport, error) {
@@ -792,7 +799,9 @@ func googleAnalyticsDimensionReport(
 		},
 		"limit": limit,
 	}
-	applyGoogleAnalyticsHostnameFilter(body, hostnames)
+	if err := scope.apply(body, property); err != nil {
+		return statsAnalyticsReport{}, err
+	}
 	if spec.Group == "trend" {
 		body["orderBys"] = []map[string]any{{
 			"dimension": map[string]string{"dimensionName": "date", "orderType": "ALPHANUMERIC"},

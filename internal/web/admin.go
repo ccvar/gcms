@@ -1315,6 +1315,16 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		}
 		if site != nil {
 			v.PlatformGoogleDefaultURIs[site.ID] = s.defaultGoogleAnalyticsURI(r, site)
+			integration := v.SiteGoogleIntegrations[site.ID][platform.GoogleServiceAnalytics]
+			scope := googleAnalyticsReportScope{Hostnames: normalizeGoogleAnalyticsHostnames(s.discoverySiteURL(site, v.PlatformDomains[site.ID]))}
+			if integration != nil {
+				scope.DataStream = strings.TrimSpace(integration.DataStream)
+			}
+			if !scope.matches(integration, v.SiteGoogleAnalyticsSummaries[site.ID]) {
+				// Hiding the stale snapshot also makes the existing browser refresh
+				// logic fetch the corrected scope immediately after an upgrade.
+				delete(v.SiteGoogleAnalyticsSummaries, site.ID)
+			}
 		}
 	}
 	v.PlatformCFStatus = map[int64]string{}

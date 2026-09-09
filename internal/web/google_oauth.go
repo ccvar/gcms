@@ -624,8 +624,8 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 	dataRange := s.googleDataRange()
 	accessToken, err := s.googleAccessToken(r.Context(), r, acc)
 	if err == nil {
-		hostnames := s.googleAnalyticsHostnamesForSite(siteID)
-		metrics, runErr := googleAnalyticsSummaryForHosts(r.Context(), accessToken, in.Property, dataRange, hostnames)
+		scope := s.googleAnalyticsScopeForSite(in)
+		metrics, runErr := googleAnalyticsSummaryForScope(r.Context(), accessToken, in.Property, dataRange, scope)
 		if runErr == nil {
 			sum := &platform.SiteGoogleAnalyticsSummary{
 				SiteID:        siteID,
@@ -636,6 +636,7 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 				ActiveUsers:   metrics.ActiveUsers7D,
 				Sessions:      metrics.Sessions7D,
 				RangeKey:      googleDataRangeKeyValue(dataRange),
+				ScopeKey:      scope.cacheKey(),
 				Status:        platform.GoogleAnalyticsSummaryStatusOK,
 				FetchedAt:     fetchedAt,
 			}
@@ -652,7 +653,9 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 				"sessions":        sum.Sessions,
 				"range_label":     dataRange.Label,
 				"range_key":       sum.RangeKey,
-				"scope_host":      firstGoogleAnalyticsHostname(hostnames),
+				"scope_host":      scope.host(),
+				"scope_type":      scope.kind(),
+				"scope_stream_id": scope.streamID(in.Property),
 				"fetched_at":      sum.FetchedAt.Format(time.RFC3339),
 			})
 			return
@@ -668,6 +671,7 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 		Property:      in.Property,
 		MeasurementID: in.MeasurementID,
 		RangeKey:      googleDataRangeKeyValue(dataRange),
+		ScopeKey:      s.googleAnalyticsScopeForSite(in).cacheKey(),
 		Status:        platform.GoogleAnalyticsSummaryStatusError,
 		ErrorMessage:  msg,
 		FetchedAt:     fetchedAt,
@@ -1794,11 +1798,7 @@ func googleAnalyticsProperties(ctx context.Context, accessToken string) ([]googl
 	return properties, err
 }
 
-func googleAnalyticsSummary(ctx context.Context, accessToken, property string, dataRange googleDataRange) (googleAnalyticsSummaryMetrics, error) {
-	return googleAnalyticsSummaryForHosts(ctx, accessToken, property, dataRange, nil)
-}
-
-func googleAnalyticsSummaryForHosts(ctx context.Context, accessToken, property string, dataRange googleDataRange, hostnames []string) (googleAnalyticsSummaryMetrics, error) {
+func googleAnalyticsSummaryForScope(ctx context.Context, accessToken, property string, dataRange googleDataRange, scope googleAnalyticsReportScope) (googleAnalyticsSummaryMetrics, error) {
 	property = normalizeGoogleAnalyticsPropertyName(property)
 	if !validGoogleAnalyticsPropertyName(property) {
 		return googleAnalyticsSummaryMetrics{}, errors.New("GA4 属性无效，无法读取统计数据")
@@ -1808,7 +1808,9 @@ func googleAnalyticsSummaryForHosts(ctx context.Context, accessToken, property s
 		"dateRanges": []map[string]string{{"startDate": startDate, "endDate": endDate}},
 		"metrics":    []map[string]string{{"name": "activeUsers"}, {"name": "sessions"}},
 	}
-	applyGoogleAnalyticsHostnameFilter(body, hostnames)
+	if err := scope.apply(body, property); err != nil {
+		return googleAnalyticsSummaryMetrics{}, err
+	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return googleAnalyticsSummaryMetrics{}, err
@@ -1916,11 +1918,13 @@ func (s *Server) googleAnalyticsHostnamesForSite(siteID int64) []string {
 	if err != nil {
 		return nil
 	}
-	return normalizeGoogleAnalyticsHostnames(s.discoverySiteURL(site, domains))
-}
-
-func googleAnalyticsSevenDaySummary(ctx context.Context, accessToken, property string) (googleAnalyticsSummaryMetrics, error) {
-	return googleAnalyticsSummary(ctx, accessToken, property, googleDataRange{Mode: "days", Days: 7})
+	var siteDomains []*platform.SiteDomain
+	for _, domain := range domains {
+		if domain != nil && domain.SiteID == siteID {
+			siteDomains = append(siteDomains, domain)
+		}
+	}
+	return normalizeGoogleAnalyticsHostnames(s.discoverySiteURL(site, siteDomains))
 }
 
 func googleAnalyticsMetricInt(values []googleAnalyticsMetricValue, index int) int {

@@ -145,14 +145,14 @@ func TestStatsAnalyticsDimensions(t *testing.T) {
 	statsAnalyticsFetch = func(
 		ctx context.Context,
 		accessToken, property string,
-		hostnames []string,
+		scope googleAnalyticsReportScope,
 		spec statsAnalyticsSpec,
 		days, limit int,
 	) (statsAnalyticsReport, error) {
 		calls++
 		gotSpec, gotDays, gotLimit = spec, days, limit
-		if strings.Join(hostnames, ",") != "example.com,www.example.com" {
-			t.Fatalf("analytics hostnames = %v", hostnames)
+		if strings.Join(scope.Hostnames, ",") != "example.com,www.example.com" {
+			t.Fatalf("analytics hostnames = %v", scope.Hostnames)
 		}
 		return statsAnalyticsReport{
 			Dimensions: append([]string(nil), spec.Dimensions...),
@@ -247,11 +247,11 @@ func TestStatsTrafficCacheAndDefaults(t *testing.T) {
 	calls := 0
 	var gotDays int
 	orig := statsTrafficFetch
-	statsTrafficFetch = func(ctx context.Context, accessToken, property string, hostnames []string, days int) (statsTrafficSummary, error) {
+	statsTrafficFetch = func(ctx context.Context, accessToken, property string, scope googleAnalyticsReportScope, days int) (statsTrafficSummary, error) {
 		calls++
 		gotDays = days
-		if strings.Join(hostnames, ",") != "example.com,www.example.com" {
-			t.Fatalf("traffic hostnames = %v", hostnames)
+		if strings.Join(scope.Hostnames, ",") != "example.com,www.example.com" {
+			t.Fatalf("traffic hostnames = %v", scope.Hostnames)
 		}
 		return statsTrafficSummary{ActiveUsers: 88, Sessions: 120}, nil
 	}
@@ -405,11 +405,11 @@ func TestStatsPages(t *testing.T) {
 	calls := 0
 	var gotDays, gotLimit int
 	orig := statsPagesFetch
-	statsPagesFetch = func(ctx context.Context, accessToken, property string, hostnames []string, days, limit int) ([]statsPageRow, error) {
+	statsPagesFetch = func(ctx context.Context, accessToken, property string, scope googleAnalyticsReportScope, days, limit int) ([]statsPageRow, error) {
 		calls++
 		gotDays, gotLimit = days, limit
-		if strings.Join(hostnames, ",") != "example.com,www.example.com" {
-			t.Fatalf("pages hostnames = %v", hostnames)
+		if strings.Join(scope.Hostnames, ",") != "example.com,www.example.com" {
+			t.Fatalf("pages hostnames = %v", scope.Hostnames)
 		}
 		return []statsPageRow{{Path: "/zh/posts/guide/", ActiveUsers: 66, Sessions: 80}}, nil
 	}

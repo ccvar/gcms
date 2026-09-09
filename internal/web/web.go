@@ -3110,15 +3110,23 @@ func (s *Server) discoverySiteIntegrations(pool *SiteRuntimePool, site *platform
 		}
 	}
 	if summary := snapshot.analytics[site.ID]; summary != nil {
+		integration := snapshot.google[site.ID][platform.GoogleServiceAnalytics]
+		scope := googleAnalyticsReportScope{Hostnames: normalizeGoogleAnalyticsHostnames(publicURL)}
+		if integration != nil {
+			scope.DataStream = strings.TrimSpace(integration.DataStream)
+			analytics["scope_stream_id"] = scope.streamID(integration.Property)
+		}
 		analytics["status"] = summary.Status
 		analytics["fetched_at"] = summary.FetchedAt
 		analytics["range_key"] = summary.RangeKey
 		analytics["range_label"] = snapshot.rangeLabel
-		analytics["scope_host"] = firstGoogleAnalyticsHostname(normalizeGoogleAnalyticsHostnames(publicURL))
-		if summary.RangeKey == snapshot.rangeKey && summary.Status == platform.GoogleAnalyticsSummaryStatusOK {
+		analytics["scope_host"] = scope.host()
+		analytics["scope_type"] = scope.kind()
+		matches := scope.matches(integration, summary)
+		if matches && summary.RangeKey == snapshot.rangeKey && summary.Status == platform.GoogleAnalyticsSummaryStatusOK {
 			analytics["active_users"] = summary.ActiveUsers
 			analytics["sessions"] = summary.Sessions
-		} else if summary.RangeKey != snapshot.rangeKey {
+		} else if !matches || summary.RangeKey != snapshot.rangeKey {
 			analytics["status"] = "stale"
 		}
 	}
@@ -3273,17 +3281,29 @@ func (s *Server) discoverySiteURL(site *platform.Site, domains []*platform.SiteD
 		return strings.TrimRight(href, "/")
 	}
 	// 回退：仅当站点有已启用域名时用 SiteDomain 记录（默认站也走同一闸门，绝不回退到平台地址）。
-	hasEnabled := false
+	var primary, first *platform.SiteDomain
 	for _, d := range domains {
-		if d != nil && d.Enabled {
-			hasEnabled = true
-			break
+		if d != nil && d.SiteID == site.ID && d.Enabled && normalizeRuntimeHost(d.Host) != "" {
+			if first == nil {
+				first = d
+			}
+			if d.IsPrimary {
+				primary = d
+				break
+			}
 		}
 	}
-	if !hasEnabled {
+	if primary == nil {
+		primary = first
+	}
+	if primary == nil {
 		return ""
 	}
-	return s.siteBaseURL(site, domains)
+	scheme := strings.TrimSpace(primary.Scheme)
+	if scheme != "http" && scheme != "https" {
+		scheme = "https"
+	}
+	return scheme + "://" + normalizeRuntimeHost(primary.Host)
 }
 
 // discoverySiteLogo 读取站点当前生效的 Logo。已部署时返回公开绝对地址；尚未部署时，

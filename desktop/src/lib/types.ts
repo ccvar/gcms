@@ -82,6 +82,8 @@ export interface Site {
       range_key?: string;
 	  range_label?: string;
 	  scope_host?: string;
+	  scope_type?: 'stream' | 'host';
+	  scope_stream_id?: string;
     };
     search_console: {
       configured: boolean;

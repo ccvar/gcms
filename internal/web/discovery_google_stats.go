@@ -23,7 +23,7 @@ type discoveryStatsRefreshReport struct {
 
 type discoveryGoogleSummaryJob struct {
 	integration platform.SiteGoogleIntegration
-	hostnames   []string
+	scope       googleAnalyticsReportScope
 	token       string
 	tokenErr    error
 }
@@ -43,7 +43,7 @@ type discoveryGoogleTokenResult struct {
 
 // 独立变量让发现接口的刷新路径可在测试中替换为确定性数据，而不访问 Google。
 var (
-	discoveryGoogleAnalyticsSummaryFetch = googleAnalyticsSummaryForHosts
+	discoveryGoogleAnalyticsSummaryFetch = googleAnalyticsSummaryForScope
 	discoveryGoogleSearchSummaryFetch    = googleSearchConsoleSummary
 )
 
@@ -73,7 +73,7 @@ func (s *Server) refreshDiscoveryGoogleSummaries(ctx context.Context, r *http.Re
 			}
 			job := discoveryGoogleSummaryJob{integration: *integration}
 			if service == platform.GoogleServiceAnalytics {
-				job.hostnames = s.googleAnalyticsHostnamesForSite(siteID)
+				job.scope = s.googleAnalyticsScopeForSite(integration)
 			}
 			jobs = append(jobs, job)
 		}
@@ -130,7 +130,7 @@ func (s *Server) refreshDiscoveryGoogleSummaries(ctx context.Context, r *http.Re
 						if strings.TrimSpace(in.Property) == "" || strings.TrimSpace(in.MeasurementID) == "" {
 							result.err = errors.New("Google Analytics 配置不完整")
 						} else {
-							metrics, fetchErr := discoveryGoogleAnalyticsSummaryFetch(ctx, job.token, in.Property, dataRange, job.hostnames)
+							metrics, fetchErr := discoveryGoogleAnalyticsSummaryFetch(ctx, job.token, in.Property, dataRange, job.scope)
 							result.analytics, result.err = &metrics, fetchErr
 						}
 					case platform.GoogleServiceSearchConsole:
@@ -170,6 +170,7 @@ func (s *Server) refreshDiscoveryGoogleSummaries(ctx context.Context, r *http.Re
 			summary := &platform.SiteGoogleAnalyticsSummary{
 				SiteID: in.SiteID, Property: in.Property, MeasurementID: in.MeasurementID,
 				RangeKey: rangeKey, Status: platform.GoogleAnalyticsSummaryStatusError,
+				ScopeKey:     result.job.scope.cacheKey(),
 				ErrorMessage: message, FetchedAt: result.fetchedAt,
 			}
 			if result.err == nil && result.analytics != nil {

@@ -556,6 +556,7 @@ func TestPlatformKeyDiscoveryIntegrationSummary(t *testing.T) {
 	}
 	if err := ps.UpsertSiteGoogleAnalyticsSummary(&platform.SiteGoogleAnalyticsSummary{
 		SiteID: blogSite.ID, ActiveUsers: 17, Sessions: 23, RangeKey: "15",
+		Property: "properties/42", MeasurementID: "G-PILOT", ScopeKey: "v2:host:blog.test,www.blog.test",
 		Status: platform.GoogleAnalyticsSummaryStatusOK, FetchedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("upsert analytics summary: %v", err)
@@ -695,7 +696,7 @@ func TestPlatformKeyDiscoveryRefreshesGoogleSummariesForCurrentRange(t *testing.
 	})
 	analyticsRange := make(chan string, 1)
 	searchRange := make(chan string, 1)
-	discoveryGoogleAnalyticsSummaryFetch = func(_ context.Context, token, property string, dataRange googleDataRange, hostnames []string) (googleAnalyticsSummaryMetrics, error) {
+	discoveryGoogleAnalyticsSummaryFetch = func(_ context.Context, token, property string, dataRange googleDataRange, scope googleAnalyticsReportScope) (googleAnalyticsSummaryMetrics, error) {
 		if token != "current-access-token" || property != "properties/300" {
 			return googleAnalyticsSummaryMetrics{}, errors.New("unexpected analytics request")
 		}

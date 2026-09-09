@@ -10676,9 +10676,17 @@
     if (Number.isNaN(date.getTime())) return '尚未刷新';
     return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);
   }
+  function gaSummaryMetricsLabel(site: Site): string {
+    const analytics = site.integrations?.analytics;
+    if (analytics?.status === 'error') return '数据暂不可用';
+    if (analytics?.status === 'stale') return '统计范围已更新，请刷新';
+    if (analytics?.active_users == null && analytics?.sessions == null) return '尚未读取统计';
+    return `${analytics?.active_users ?? 0} 位活跃用户 · ${analytics?.sessions ?? 0} 次会话`;
+  }
   function gaSummaryTraffic(): GaTrafficPayload | null {
     const summary = gaInsightsSite?.integrations?.analytics;
     if (!summary || (summary.active_users == null && summary.sessions == null)) return null;
+    if (summary.status === 'error' || summary.status === 'stale') return null;
     if (summary.range_key && summary.range_key !== gaInsightsDays) return null;
     return {
       ok: true,
@@ -13097,7 +13105,7 @@
                     </div>
                     <div class="site-dashboard-status">
                       <div class="site-dashboard-integrations" aria-label="站点接入状态">
-                        <button type="button" class="site-integration" class:configured={ga?.configured} class:attention={ga?.configured && !ga.enabled} data-tip={ga?.configured ? (ga.enabled ? `Google Analytics 已启用 · ${gaSummaryRangeLabel(site)} · ${ga.active_users ?? 0} 位活跃用户 · ${ga.sessions ?? 0} 次会话 · 更新于 ${gaSummaryUpdatedLabel(site)}` : 'Google Analytics 已配置，但接入尚未完成') : 'Google Analytics 未配置'} onclick={() => void openSiteIntegrationEditor(site, 'analytics')}>
+                        <button type="button" class="site-integration" class:configured={ga?.configured} class:attention={ga?.configured && !ga.enabled} data-tip={ga?.configured ? (ga.enabled ? `Google Analytics 已启用 · ${gaSummaryRangeLabel(site)} · ${gaSummaryMetricsLabel(site)} · 更新于 ${gaSummaryUpdatedLabel(site)}` : 'Google Analytics 已配置，但接入尚未完成') : 'Google Analytics 未配置'} onclick={() => void openSiteIntegrationEditor(site, 'analytics')}>
                           {@render googleAnalyticsIcon(14)}
                         </button>
                         <button type="button" class="site-integration" class:configured={gsc?.configured} class:attention={gsc?.configured && !gsc.enabled} data-tip={gsc?.configured ? (gsc.enabled ? `Google Search Console 已启用 · ${gsc.clicks ?? 0} 点击 · ${gsc.impressions ?? 0} 曝光` : 'Google Search Console 已添加属性，等待完成所有权验证') : 'Google Search Console 未配置'} onclick={() => void openSiteIntegrationEditor(site, 'search_console')}>
@@ -13137,6 +13145,8 @@
                               <span class="site-dashboard-metric-label">
                                 {#if ga.status === 'error'}
                                   <b>GA：</b>数据暂不可用
+                                {:else if ga.status === 'stale'}
+                                  <b>GA：</b>统计范围已更新，待刷新
                                 {:else if ga.active_users != null || ga.sessions != null}
                                   <b>GA：</b>{gaSummaryRangeLabel(site)} · {ga.active_users ?? 0} 用户 · {ga.sessions ?? 0} 会话
                                 {:else}
@@ -16897,8 +16907,8 @@
               <div><small>当前网站</small><b>{editorSite.url || hostOf(editorSite.url || '') || '未设置'}</b></div>
               <div><small>GA4 属性</small><b>{integrationSite.analytics.property || '自动匹配'}</b></div>
               <div><small>Measurement ID</small><b>{integrationSite.analytics.measurement_id || '等待 Google 返回'}</b></div>
-              <div><small>当前数据</small><b>{editorSite.integrations?.analytics.active_users ?? 0} 位活跃用户 · {editorSite.integrations?.analytics.sessions ?? 0} 次会话</b></div>
-              <div><small>统计范围</small><b>{gaSummaryRangeLabel(editorSite)} · {editorSite.integrations?.analytics.scope_host || hostOf(editorSite.url || '') || '整个 GA4 属性'}</b></div>
+              <div><small>当前数据</small><b>{gaSummaryMetricsLabel(editorSite)}</b></div>
+              <div><small>统计范围</small><b>{gaSummaryRangeLabel(editorSite)} · {editorSite.integrations?.analytics.scope_type === 'stream' ? '已绑定的网站数据流' : editorSite.integrations?.analytics.scope_host || hostOf(editorSite.url || '') || '待确定'}</b></div>
               <div><small>更新时间</small><b>{gaSummaryUpdatedLabel(editorSite)}</b></div>
             </div>
           {:else}
