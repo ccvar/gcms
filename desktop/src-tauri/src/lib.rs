@@ -20,6 +20,7 @@ mod pilot_console;
 mod scheduled;
 mod skills;
 mod ssh;
+mod sftp_transfer;
 mod static_server;
 mod tasks;
 mod tools;
@@ -2132,6 +2133,16 @@ async fn sftp_mkdir(
 ) -> Result<(), String> {
     ensure_ssh(&state, &conn_id).await?;
     state.ssh.mkdir(&conn_id, &path).await
+}
+
+#[tauri::command]
+async fn sftp_create_file(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    path: String,
+) -> Result<(), String> {
+    ensure_ssh(&state, &conn_id).await?;
+    state.ssh.create_file(&conn_id, &path).await
 }
 
 #[tauri::command]
@@ -8677,6 +8688,10 @@ pub fn run() {
             sftp_copy,
             sftp_remove,
             sftp_mkdir,
+            sftp_create_file,
+            sftp_transfer::sftp_download_entry,
+            sftp_transfer::sftp_cancel_download,
+            sftp_transfer::sftp_start_drag,
             sftp_download,
             sftp_upload,
             save_attachment,

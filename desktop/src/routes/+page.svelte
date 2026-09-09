@@ -24,6 +24,9 @@
     ThemeCatalogItem, ThemeSkin, ThemeFamily, ThemeCatalog, SiteThemeState, ThemeMutationResult, ThemePreviewURL,
   } from '$lib/types';
   import { loadPrefs, savePrefs } from '$lib/defaults';
+  import { copyTargetName, fitFileMenu } from '$lib/sftpFiles';
+  import FileCodeEditor from '$lib/FileCodeEditor.svelte';
+  import { inspectEditorText, serializeEditorText } from '$lib/fileEditor';
   import { PRESET_PROMPTS, loadUserPrompts, saveUserPrompts, newPromptId, type Prompt } from '$lib/prompts';
   import Dropdown from '$lib/Dropdown.svelte';
   import GaOverviewChart from '$lib/GaOverviewChart.svelte';
@@ -47,7 +50,7 @@
     connectionRemark: { id: 'connection-remark', minWidth: 320, minHeight: 160, draggable: true, resizable: false, rememberPosition: true },
     connectionKey: { id: 'connection-key', minWidth: 360, minHeight: 210, draggable: true, resizable: false, rememberPosition: true },
     fileOperation: { id: 'file-operation', minWidth: 320, minHeight: 160, draggable: true, resizable: false, rememberPosition: true },
-    fileEditor: { id: 'file-editor', minWidth: 480, minHeight: 320, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    fileEditor: { id: 'file-editor', storageVersion: 2, minWidth: 560, minHeight: 380, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
     cloudflare: { id: 'cloudflare-connect', minWidth: 380, minHeight: 360, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
     templateSave: { id: 'template-save', minWidth: 320, minHeight: 180, draggable: true, resizable: false, rememberPosition: true },
     templateUse: { id: 'template-use', minWidth: 320, minHeight: 180, draggable: true, resizable: false, rememberPosition: true },
@@ -9360,6 +9363,11 @@
     else void sftpGo(sftpPath);
   }
   let sftpXfer = $state(''); // 上传/下载进行中的提示文案
+  type DownloadProgress = { phase: string; bytes: number; total_bytes: number; files: number; total_files: number; skipped: number };
+  type DownloadResult = { path: string; drag_id: string | null; skipped: number };
+  let sftpDownloadTask = $state<null | { id: string; name: string; started: boolean; cancelling: boolean; progress: DownloadProgress | null }>(null);
+  let sftpDragReady = $state<null | { id: string; connId: string; remote: string; name: string; size: number; mtime: number }>(null);
+  let sftpNativeDragging = $state(false);
   let sftpFileOver = $state(false);
   let sftpClipboard = $state<null | { connId: string; path: string; name: string; dir: boolean }>(null);
   // connId + path：切换服务器时，旧服务器仍在进行的删除不会误伤当前列表状态。
@@ -9517,6 +9525,7 @@
   /** 刷新：重读当前展开着的每一层，**保留展开状态**（sftpGo 是「换根」，会把整棵树收起来）。 */
   async function sftpRefresh() {
     if (!sftpPath || sftpBusy) return;
+    sftpDragReady = null; // 刷新后重新下载，避免把旧快照当成远端最新内容。
     sftpBusy = true; sftpErr = '';
     try {
       const dirs = [sftpPath, ...sftpOpenDirs];
@@ -9565,8 +9574,16 @@
   }
   // ---- 右键菜单 ----
   let fctxMenu = $state<null | { x: number; y: number; row: SftpRow | null }>(null);
+  let fctxMenuEl = $state<HTMLDivElement | null>(null);
+  $effect(() => {
+    if (!fctxMenu || !fctxMenuEl) return;
+    const { x, y } = fitFileMenu(fctxMenu.x, fctxMenu.y, fctxMenuEl.offsetWidth, fctxMenuEl.offsetHeight, window.innerWidth, window.innerHeight);
+    if (x !== fctxMenu.x || y !== fctxMenu.y) fctxMenu = { ...fctxMenu, x, y };
+  });
   function openFctx(e: MouseEvent, row: SftpRow | null) {
     e.preventDefault();
+    e.stopPropagation(); // 空白处也不能冒泡到 window 的菜单关闭监听。
+    if (!sftpPath || sftpBusy) return;
     if (row && isSftpDeleting(row.path)) return;
     if (row) sftpSel = row.path;
     // 贴边时往回收，别让菜单跑出窗口
@@ -9580,7 +9597,7 @@
     if (!fctxMenu) return;
     const close = () => (fctxMenu = null);
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') fctxMenu = null; };
-    // capture：菜单项自己的 onclick 先跑，再由这里收摊
+    // 冒泡阶段：菜单项自己的 onclick 先跑，再由这里收摊。
     window.addEventListener('click', close);
     window.addEventListener('contextmenu', close);
     window.addEventListener('keydown', onKey);
@@ -9598,51 +9615,43 @@
     sftpClipboard = { connId: sftpConnId, path: r.path, name: r.name, dir: r.dir && !r.link };
     say(`已复制「${r.name}」，在目标文件夹右键粘贴`);
   }
-  function copyTargetName(name: string, dir: boolean, taken: Set<string>): string {
-    if (!taken.has(name)) return name;
-    let stem = name;
-    let ext = '';
-    if (!dir) {
-      const dot = name.lastIndexOf('.');
-      if (dot > 0) { stem = name.slice(0, dot); ext = name.slice(dot); }
-    }
-    for (let i = 1; i < 1000; i++) {
-      const candidate = `${stem} 副本${i === 1 ? '' : ` ${i}`}${ext}`;
-      if (!taken.has(candidate)) return candidate;
-    }
-    return `${stem} 副本 ${Date.now()}${ext}`;
-  }
-  async function pasteSftpEntry(dir = sftpPath) {
-    const copied = sftpClipboard;
+  async function pasteSftpEntry(dir = sftpPath, copied = sftpClipboard) {
     if (!copied || copied.connId !== sftpConnId || !dir || sftpXfer) return;
+    const connId = copied.connId;
     sftpXfer = `复制 ${copied.name}…`;
     try {
       // 粘贴前重新读取目标目录，避免缓存落后于服务器时误判重名并让 cp 失败。
-      const kids = await invoke<SftpEntry[]>('sftp_list', { connId: sftpConnId, path: dir });
+      const kids = await invoke<SftpEntry[]>('sftp_list', { connId, path: dir });
       const name = copyTargetName(copied.name, copied.dir, new Set(kids.map((item) => item.name)));
       const target = sftpJoin(dir, name);
-      await invoke('sftp_copy', { connId: sftpConnId, from: copied.path, to: target });
+      await invoke('sftp_copy', { connId, from: copied.path, to: target });
       say(name === copied.name ? `已粘贴「${name}」` : `已粘贴为「${name}」`);
-      await loadDir(dir, true);
+      if (sftpConnId === connId) await loadDir(dir, true);
     } catch (e) { say(String(e), 'err'); }
     finally { sftpXfer = ''; }
   }
-  // 新建文件夹 / 重命名共用一个「起名」弹窗。dir＝在哪个目录里操作。
-  let fsAsk = $state<null | { mode: 'mkdir' | 'rename'; dir: string; from: string; value: string; busy: boolean; err: string }>(null);
-  function openMkdir(dir = sftpPath) { fsAsk = { mode: 'mkdir', dir, from: '', value: '', busy: false, err: '' }; }
-  function openRename(r: SftpRow) { fsAsk = { mode: 'rename', dir: parentOf(r.path), from: r.name, value: r.name, busy: false, err: '' }; }
+  function duplicateSftpEntry(r: SftpRow) {
+    return pasteSftpEntry(sftpPath, { connId: sftpConnId, path: r.path, name: r.name, dir: r.dir && !r.link });
+  }
+  // 新建文件夹 / 文件 / 重命名共用一个「起名」弹窗，固定连接与目标目录。
+  let fsAsk = $state<null | { mode: 'mkdir' | 'create' | 'rename'; connId: string; dir: string; from: string; value: string; busy: boolean; err: string }>(null);
+  function openMkdir(dir = sftpPath) { fsAsk = { mode: 'mkdir', connId: sftpConnId, dir, from: '', value: '', busy: false, err: '' }; }
+  function openNewFile(dir = sftpPath) { fsAsk = { mode: 'create', connId: sftpConnId, dir, from: '', value: '', busy: false, err: '' }; }
+  function openRename(r: SftpRow) { fsAsk = { mode: 'rename', connId: sftpConnId, dir: parentOf(r.path), from: r.name, value: r.name, busy: false, err: '' }; }
   async function confirmFsAsk() {
     if (!fsAsk || fsAsk.busy) return;
     const v = fsAsk.value.trim();
     if (!v) return;
-    if (v.includes('/')) { fsAsk.err = '名字里不能带 /'; return; }
+    if (v.includes('/') || v.includes('\0') || v === '.' || v === '..') { fsAsk.err = '请输入有效名字，不能包含 /、空字符或使用 .、..'; return; }
     fsAsk.busy = true; fsAsk.err = '';
     const dir = fsAsk.dir;
+    const connId = fsAsk.connId;
     try {
-      if (fsAsk.mode === 'mkdir') await invoke('sftp_mkdir', { connId: sftpConnId, path: sftpJoin(dir, v) });
-      else await invoke('sftp_rename', { connId: sftpConnId, from: sftpJoin(dir, fsAsk.from), to: sftpJoin(dir, v) });
+      if (fsAsk.mode === 'mkdir') await invoke('sftp_mkdir', { connId, path: sftpJoin(dir, v) });
+      else if (fsAsk.mode === 'create') await invoke('sftp_create_file', { connId, path: sftpJoin(dir, v) });
+      else await invoke('sftp_rename', { connId, from: sftpJoin(dir, fsAsk.from), to: sftpJoin(dir, v) });
       fsAsk = null;
-      await loadDir(dir, true);
+      if (sftpConnId === connId) await loadDir(dir, true);
     } catch (e) { if (fsAsk) { fsAsk.err = String(e); fsAsk.busy = false; } }
   }
   async function sftpDelete(r: SftpRow) {
@@ -9673,13 +9682,77 @@
       sftpDeleting = next;
     }
   }
-  async function sftpDownload(r: SftpRow) {
-    const local = await saveDialog({ defaultPath: r.name, title: `下载 ${r.name}` });
-    if (!local) return;
-    sftpXfer = `下载 ${r.name}…`;
-    try { await invoke('sftp_download', { connId: sftpConnId, remote: r.path, local }); say(`已下载到 ${local}`); }
+  async function sftpDownload(r: SftpRow, archive = false, prepareDrag = false) {
+    if (sftpXfer) return;
+    const connId = sftpConnId;
+    const directory = r.dir && !r.link;
+    sftpXfer = `选择 ${r.name} 的保存位置…`;
+    try {
+      let local: string | null = null;
+      if (!prepareDrag) {
+        if (directory && !archive) {
+          const picked = await open({ directory: true, multiple: false, title: `选择「${r.name}」的本地保存目录` });
+          local = typeof picked === 'string' ? picked : null;
+        } else {
+          local = await saveDialog({ defaultPath: archive ? `${r.name}.tar.gz` : r.name, title: `下载 ${r.name}（同名文件不会覆盖）` });
+        }
+        if (!local) return;
+      } else { sftpDragReady = null; }
+      const id = crypto.randomUUID();
+      sftpDownloadTask = { id, name: r.name, started: false, cancelling: false, progress: null };
+      sftpXfer = `${prepareDrag ? '准备拖出' : '下载'} ${r.name}…`;
+      const onProgress = new Channel<DownloadProgress>();
+      onProgress.onmessage = (progress) => {
+        if (sftpDownloadTask?.id === id) sftpDownloadTask = { ...sftpDownloadTask, started: true, progress };
+      };
+      const result = await invoke<DownloadResult>('sftp_download_entry', {
+        connId, remote: r.path, local, directory, archive, prepareDrag, transferId: id, onProgress,
+      });
+      if (prepareDrag && result.drag_id) {
+        sftpDragReady = { id: result.drag_id, connId, remote: r.path, name: r.name, size: r.size, mtime: r.mtime };
+        say('已准备好，请再次拖动该项，或拖动上方的“拖到本机”按钮');
+      } else {
+        say(result.skipped ? `已下载到 ${result.path}；跳过 ${result.skipped} 个软链接或特殊文件，如需保留请使用打包下载` : `已下载到 ${result.path}`);
+      }
+    }
     catch (e) { say(String(e), 'err'); }
-    finally { sftpXfer = ''; }
+    finally { sftpXfer = ''; sftpDownloadTask = null; }
+  }
+  async function cancelSftpDownload() {
+    const task = sftpDownloadTask;
+    if (!task?.started || task.cancelling) return;
+    sftpDownloadTask = { ...task, cancelling: true };
+    try { await invoke('sftp_cancel_download', { transferId: task.id }); }
+    catch (e) {
+      if (sftpDownloadTask?.id === task.id) sftpDownloadTask = { ...sftpDownloadTask, cancelling: false };
+      say(String(e), 'err');
+    }
+  }
+  async function startPreparedSftpDrag(e: DragEvent) {
+    e.preventDefault(); e.stopPropagation();
+    const ready = sftpDragReady;
+    if (!ready || ready.connId !== sftpConnId || sftpNativeDragging || sftpXfer) return;
+    sftpNativeDragging = true;
+    fctxMenu = null;
+    const onEvent = new Channel<string>();
+    onEvent.onmessage = (result) => {
+      sftpNativeDragging = false;
+      if (result === 'dropped') say('已交给系统复制，请在目标文件夹查看完成情况');
+    };
+    try { await invoke('sftp_start_drag', { dragId: ready.id, onEvent }); }
+    catch (err) { sftpNativeDragging = false; say(String(err), 'err'); }
+  }
+  function onSftpDragStart(e: DragEvent, r: SftpRow) {
+    e.preventDefault(); e.stopPropagation();
+    if (isSftpDeleting(r.path) || sftpXfer || sftpNativeDragging) return;
+    const ready = sftpDragReady;
+    if (ready?.connId === sftpConnId && ready.remote === r.path && ready.size === r.size && ready.mtime === r.mtime) {
+      void startPreparedSftpDrag(e);
+    } else {
+      fctxMenu = null;
+      say('正在下载到本机缓存；准备好后请再拖一次');
+      void sftpDownload(r, false, true);
+    }
   }
   async function sftpUpload(dir = sftpPath) {
     const picked = await open({ multiple: true, title: '选择要上传的文件' });
@@ -9726,7 +9799,7 @@
     }
   }
   function onSftpDragOver(e: DragEvent) {
-    if (!e.dataTransfer?.types?.includes('Files') || sftpBusy || !!sftpXfer) return;
+    if (!e.dataTransfer?.types?.includes('Files') || sftpBusy || !!sftpXfer || sftpNativeDragging) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     sftpFileOver = true;
@@ -9737,6 +9810,7 @@
   }
   function onSftpDrop(e: DragEvent) {
     sftpFileOver = false;
+    if (sftpNativeDragging) { e.preventDefault(); return; }
     const files = Array.from(e.dataTransfer?.files ?? []);
     if (!files.length) return;
     e.preventDefault();
@@ -9750,34 +9824,96 @@
   let edSaving = $state(false);
   let edErr = $state('');
   let edReadOnly = $state(false);
+  let edConnId = '';
+  let edSession = 0;
+  let edOriginalB64 = '';
+  let edOriginal = $state('');
+  let edFormat = $state(inspectEditorText(''));
+  let edFull = $state(false);
+  let edFormatting = $state(false);
+  let edClosing = $state(false);
+  let edSaved = $state(false);
+  const edDirty = $derived(edText !== edOriginal);
+
+  async function closeEdit(): Promise<boolean> {
+    if (edSaving || edFormatting || edClosing) return false;
+    edClosing = true;
+    try {
+      if (edDirty && !await confirmDialog('这个文件有尚未保存的修改。放弃后无法恢复，远端文件不会改变。', {
+        title: '放弃文件修改？', confirmText: '放弃修改', cancelText: '继续编辑',
+      })) return false;
+      edOpen = false; ++edSession;
+      return true;
+    } finally { edClosing = false; }
+  }
+
   async function sftpEdit(path: string) {
+    const connId = sftpConnId;
+    if (!connId || (edOpen && !await closeEdit())) return;
+    const session = ++edSession;
+    edConnId = connId; edOriginal = ''; edOriginalB64 = ''; edFull = false; edSaved = false;
+    edFormatting = false;
     edOpen = true; edPath = path; edText = ''; edErr = ''; edReadOnly = false; edLoading = true;
     try {
-      const b64 = await invoke<string>('sftp_read', { connId: sftpConnId, path });
+      const b64 = await invoke<string>('sftp_read', { connId, path });
+      if (session !== edSession) return;
       // fatal 模式：不是合法 UTF-8（二进制）直接抛 TypeError → 只给下载不给编辑
-      edText = new TextDecoder('utf-8', { fatal: true }).decode(b64ToBytes(b64));
+      const raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(b64ToBytes(b64));
+      if (raw.includes('\0')) throw new TypeError('Binary file');
+      edOriginalB64 = b64;
+      edFormat = inspectEditorText(raw);
+      edText = edOriginal = edFormat.text;
     } catch (e) {
+      if (session !== edSession) return;
       edReadOnly = true;
       edErr = e instanceof TypeError ? '这是二进制文件，不能在线编辑；右键「下载」可以取回本地。' : String(e);
-    } finally { edLoading = false; }
+    } finally { if (session === edSession) edLoading = false; }
   }
   async function saveEdit() {
-    if (edSaving || edReadOnly) return;
+    if (!edOpen || edLoading || edSaving || edFormatting || edClosing || edReadOnly || !edDirty) return;
     edSaving = true; edErr = '';
+    const connId = edConnId, path = edPath, text = edText;
     try {
-      await invoke('sftp_write', { connId: sftpConnId, path: edPath, b64: strToB64(edText) });
-      edOpen = false;
-      say(`已保存 ${edPath}`);
-      await loadDir(parentOf(edPath), true); // 大小/时间变了，刷新它所在的那层
+      if (edFormat.mixed && !await confirmDialog(`这个文件混用了多种换行符。保存会统一为 ${edFormat.eol === '\r\n' ? 'CRLF' : edFormat.eol === '\r' ? 'CR' : 'LF'}，是否继续？`, {
+        title: '确认换行方式', confirmText: '统一并保存', cancelText: '返回编辑',
+      })) return;
+      const current = await invoke<string>('sftp_read', { connId, path });
+      if (current !== edOriginalB64) throw new Error('远端文件已被其他操作修改，已停止保存以免覆盖。请先复制保留本次修改，再关闭并重新打开文件进行核对。');
+      const b64 = strToB64(serializeEditorText(text, edFormat));
+      await invoke('sftp_write', { connId, path, b64 });
+      edOriginal = text; edOriginalB64 = b64; edFormat.mixed = false; edSaved = true;
+      say(`已保存 ${path}`);
+      if (sftpConnId === connId) void loadDir(parentOf(path), true);
     } catch (e) { edErr = String(e); }
     finally { edSaving = false; }
   }
   function onEditKey(e: KeyboardEvent) {
+    if (e.defaultPrevented || confirmState) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
       void saveEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      if (edFull) edFull = false;
+      else void closeEdit();
     }
   }
+
+  $effect(() => {
+    if (!edOpen) return;
+    const unload = (event: BeforeUnloadEvent) => {
+      if (edOpen && (edDirty || edSaving || edFormatting)) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', unload);
+    // The main window closes to the tray (and keeps edits). Guard only windows
+    // that actually close; otherwise the native tray handler hides the prompt.
+    const unlisten = !isThemeWindow && pilotWindowLabel !== 'main' ? getCurrentWindow().onCloseRequested(async event => {
+      if (!edOpen || (!edDirty && !edSaving && !edFormatting)) return;
+      event.preventDefault();
+      if (await closeEdit()) await getCurrentWindow().close();
+    }).catch(() => () => {}) : Promise.resolve(() => {});
+    return () => { window.removeEventListener('beforeunload', unload); void unlisten.then(dispose => dispose()); };
+  });
 
   // ---------- 连接 Cloudflare ----------
   const CF_TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
@@ -12211,7 +12347,7 @@
   onblur={stopGscInsightsResize}
   onscrollcapture={() => { hideTip(); imgTip = null; hoverWant = ''; }}
   onresize={() => { hideTip(); imgTip = null; hoverWant = ''; }}
-  onkeydown={(e) => { if (e.key === 'Escape') { if (lightbox) lightbox = ''; closeSitesGlobalMenu(); if (themeEditor) closeSiteThemeEditor(); } }}
+  onkeydown={(e) => { if (edOpen) { onEditKey(e); return; } if (e.key === 'Escape') { if (lightbox) lightbox = ''; closeSitesGlobalMenu(); if (themeEditor) closeSiteThemeEditor(); } }}
 />
 {#if !isThemeWindow}
 <main class="app" class:win={isWindows} class:fs={isFullscreen} class:rail-collapsed={railCollapsed} class:top-update-visible={topUpdateVisible}>
@@ -13923,7 +14059,24 @@
             <button class="fbtn" aria-label="新建文件夹" data-tip="新建文件夹" onclick={() => openMkdir()} disabled={sftpBusy}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M8 7.4v3.4M6.3 9.1h3.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
             <button class="fbtn" aria-label="上传文件" data-tip="上传到当前目录" onclick={() => sftpUpload()} disabled={sftpBusy || !!sftpXfer}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 10.4V3.6M4.8 6.4 8 3.2l3.2 3.2M3 12.8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
           </div>
-          {#if sftpXfer}<div class="files-note">{sftpXfer}</div>{/if}
+          {#if sftpXfer}
+            <div class="files-note sftp-transfer-note" role="status">
+              <span>{sftpXfer}
+                {#if sftpDownloadTask?.progress}
+                  {@const p = sftpDownloadTask.progress}
+                  <small>{p.phase === 'connecting' ? '正在连接…' : p.phase === 'scanning' ? `扫描目录：已找到 ${p.total_files} 个文件` : `${fmtSize(p.bytes)}${p.total_bytes ? ` / ${fmtSize(p.total_bytes)}` : ''} · ${p.files}/${p.total_files} 个文件`}</small>
+                  {#if p.total_bytes > 0 && p.phase === 'downloading'}<progress max={p.total_bytes} value={Math.min(p.bytes, p.total_bytes)} aria-label="下载进度"></progress>{/if}
+                {/if}
+              </span>
+              {#if sftpDownloadTask}<button class="btn sm" onclick={cancelSftpDownload} disabled={!sftpDownloadTask.started || sftpDownloadTask.cancelling}>{sftpDownloadTask.cancelling ? '取消中…' : '取消'}</button>{/if}
+            </div>
+          {/if}
+          {#if sftpDragReady?.connId === sftpConnId && !sftpXfer}
+            <div class="files-note sftp-drag-note">
+              <button class="btn sm" draggable={!sftpNativeDragging} ondragstart={startPreparedSftpDrag} onclick={() => say('请按住此按钮，拖到 Finder、桌面或资源管理器')} disabled={sftpNativeDragging}>拖到本机：{sftpDragReady.name}</button>
+              <small>已下载快照；直接拖动，不删除远端内容。刷新列表可重新准备。</small>
+            </div>
+          {/if}
           <!-- 出错就地给个重试：首次加载失败时 sftpPath 还是空的，刷新键（要有当前目录）帮不上忙 -->
           {#if sftpErr}<button type="button" class="err-note files-err" onclick={retryOrRepairSftp} title={missingSshCredential(sftpErr) ? '打开连接设置并补录密码' : '点击重试'}>{sftpErr} · {missingSshCredential(sftpErr) ? '补录密码' : '点此重试'}</button>{/if}
           <div class="fhead">
@@ -13944,6 +14097,7 @@
                 {@const deleteTarget = isSftpDeleteTarget(r.path)}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div class="frow" class:on={sftpSel === r.path} class:deleting role="row" tabindex="-1" aria-busy={deleting}
+                  draggable={!deleting && !sftpXfer && !sftpNativeDragging} ondragstart={(e) => onSftpDragStart(e, r)}
                   onclick={() => { if (!deleting) sftpSel = r.path; }}
                   ondblclick={() => { if (!deleting) sftpOpenRow(r); }}
                   oncontextmenu={(e) => { e.stopPropagation(); if (!deleting) openFctx(e, r); }}
@@ -17809,19 +17963,20 @@
 
 {#if fctxMenu}
   <!-- 远程文件右键菜单。挂最外层：列表自己是滚动容器，菜单放里面会被裁掉。 -->
-  <div class="ctx-menu fctx" style="left:{fctxMenu.x}px; top:{fctxMenu.y}px" role="menu" tabindex="-1">
+  <div bind:this={fctxMenuEl} class="ctx-menu fctx" style="left:{fctxMenu.x}px; top:{fctxMenu.y}px" role="menu" tabindex="-1">
     {#if fctxMenu.row}
       {@const r = fctxMenu.row}
       <button class="ctx-item" role="menuitem" onclick={() => sftpOpenRow(r)}>{r.dir && !r.link ? '打开' : r.link ? '打开（跟随链接）' : '打开（编辑）'}</button>
-      {#if !r.dir || r.link}
-        <button class="ctx-item" role="menuitem" onclick={() => sftpDownload(r)} disabled={!!sftpXfer}>下载…</button>
-      {/if}
+      <button class="ctx-item" role="menuitem" onclick={() => sftpDownload(r)} disabled={!!sftpXfer}>下载…</button>
+      {#if r.dir && !r.link}<button class="ctx-item" role="menuitem" onclick={() => sftpDownload(r, true)} disabled={!!sftpXfer}>打包下载（.tar.gz）…</button>{/if}
+      <button class="ctx-item" role="menuitem" onclick={() => sftpDownload(r, false, true)} disabled={!!sftpXfer || sftpNativeDragging}>准备拖到本机…</button>
       {#if r.dir && !r.link}
         <button class="ctx-item" role="menuitem" onclick={() => sftpUpload(r.path)} disabled={!!sftpXfer}>上传到这里…</button>
         <button class="ctx-item" role="menuitem" onclick={() => openMkdir(r.path)}>在这里新建文件夹</button>
       {/if}
       <div class="ctx-div"></div>
       <button class="ctx-item" role="menuitem" onclick={() => copySftpEntry(r)}>复制</button>
+      <button class="ctx-item" role="menuitem" onclick={() => duplicateSftpEntry(r)} disabled={!!sftpXfer}>复制到当前目录</button>
       {#if r.dir && !r.link && sftpClipboard}
         <button class="ctx-item" role="menuitem" onclick={() => pasteSftpEntry(r.path)} disabled={!!sftpXfer || sftpClipboard.connId !== sftpConnId}>粘贴到这里</button>
       {/if}
@@ -17831,6 +17986,7 @@
       <button class="ctx-item danger" role="menuitem" onclick={() => sftpDelete(r)}>删除…</button>
     {:else}
       <button class="ctx-item" role="menuitem" onclick={() => openMkdir()}>新建文件夹</button>
+      <button class="ctx-item" role="menuitem" onclick={() => openNewFile()}>新建文件</button>
       <button class="ctx-item" role="menuitem" onclick={() => sftpUpload()} disabled={!!sftpXfer}>上传文件…</button>
       <div class="ctx-div"></div>
       {#if sftpClipboard}
@@ -17844,12 +18000,12 @@
 
 {#if fsAsk}
   <div class="mask" role="presentation" onclick={() => !fsAsk?.busy && (fsAsk = null)}></div>
-  <div class="modal" use:dialogGeometry={DIALOG_GEOMETRY.fileOperation} role="dialog" aria-modal="true" aria-label={fsAsk.mode === 'mkdir' ? '新建文件夹' : `重命名 ${fsAsk.from}`}>
-    <header class="sheet-head"><b>{fsAsk.mode === 'mkdir' ? '新建文件夹' : `重命名「${fsAsk.from}」`}</b><button class="x" onclick={() => (fsAsk = null)} disabled={fsAsk.busy}>×</button></header>
+  <div class="modal" use:dialogGeometry={DIALOG_GEOMETRY.fileOperation} role="dialog" aria-modal="true" aria-label={fsAsk.mode === 'mkdir' ? '新建文件夹' : fsAsk.mode === 'create' ? '新建文件' : `重命名 ${fsAsk.from}`}>
+    <header class="sheet-head"><b>{fsAsk.mode === 'mkdir' ? '新建文件夹' : fsAsk.mode === 'create' ? '新建文件' : `重命名「${fsAsk.from}」`}</b><button class="x" onclick={() => (fsAsk = null)} disabled={fsAsk.busy}>×</button></header>
     <div class="sheet-body">
-      <p class="hint">位置：<code>{sftpPath}</code></p>
+      <p class="hint">位置：<code>{fsAsk.dir}</code></p>
       <!-- svelte-ignore a11y_autofocus -->
-      <input class="tin" bind:value={fsAsk.value} placeholder={fsAsk.mode === 'mkdir' ? '文件夹名' : '新名字'} spellcheck="false" autocapitalize="off" autocorrect="off" autofocus disabled={fsAsk.busy} onkeydown={(e) => e.key === 'Enter' && confirmFsAsk()} />
+      <input class="tin" bind:value={fsAsk.value} placeholder={fsAsk.mode === 'mkdir' ? '文件夹名' : fsAsk.mode === 'create' ? '文件名（例如 notes.txt）' : '新名字'} spellcheck="false" autocapitalize="off" autocorrect="off" autofocus disabled={fsAsk.busy} onkeydown={(e) => e.key === 'Enter' && confirmFsAsk()} />
       {#if fsAsk.err}<div class="err-note">{fsAsk.err}</div>{/if}
       <div class="row-end">
         <button class="btn ghost" onclick={() => (fsAsk = null)} disabled={fsAsk.busy}>取消</button>
@@ -17860,23 +18016,37 @@
 {/if}
 
 {#if edOpen}
-  <div class="mask" role="presentation" onclick={() => !edSaving && (edOpen = false)}></div>
-  <div class="modal ed-modal" use:dialogGeometry={DIALOG_GEOMETRY.fileEditor} role="dialog" aria-modal="true" aria-label={`编辑文件 ${edPath}`} aria-busy={edSaving}>
-    <header class="sheet-head"><div><b>编辑文件</b><small class="dim ed-path">{edPath}</small></div><button class="x" onclick={() => (edOpen = false)} disabled={edSaving}>×</button></header>
+  <div class="mask" role="presentation" onclick={() => void closeEdit()}></div>
+  <div class="modal ed-modal" class:ed-full={edFull} use:dialogGeometry={{ ...DIALOG_GEOMETRY.fileEditor, enabled: !edFull }} role="dialog" aria-modal="true" aria-label={`编辑文件 ${edPath}`} aria-busy={edSaving}>
+    <header class="sheet-head ed-head">
+      <div class="ed-heading"><div><b>编辑文件</b><span class="ed-badge" class:dirty={edDirty}>{edDirty ? '未保存' : edSaved ? '已保存' : '远程文件'}</span></div><small class="dim ed-path" title={edPath}>{edPath}</small></div>
+      <button type="button" class="btn ghost ed-expand" title={edFull ? '退出全屏' : '全屏编辑'} aria-label={edFull ? '退出全屏' : '全屏编辑'} aria-pressed={edFull} onclick={() => { edFull = !edFull; }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          {#if edFull}
+            <path d="M3 8h5V3M16 3v5h5M21 16h-5v5M8 21v-5H3" />
+          {:else}
+            <path d="M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5" />
+          {/if}
+        </svg>
+      </button>
+      <button class="x" aria-label="关闭文件编辑器" onclick={() => void closeEdit()} disabled={edSaving || edFormatting}>×</button>
+    </header>
     <div class="sheet-body ed-body">
       {#if edLoading}
         <div class="files-empty">读取中…</div>
       {:else if edErr && edReadOnly}
         <div class="err-note">{edErr}</div>
       {:else}
-        <textarea class="ed-ta" bind:value={edText} spellcheck="false" autocapitalize="off" disabled={edSaving} onkeydown={onEditKey}></textarea>
+        <FileCodeEditor bind:value={edText} path={edPath} indent={edFormat.indent} readonly={edSaving || edClosing} bind:busy={edFormatting}
+          eol={`UTF-8${edFormat.bom ? ' BOM' : ''} · ${edFormat.mixed ? '混合换行' : edFormat.eol === '\r\n' ? 'CRLF' : edFormat.eol === '\r' ? 'CR' : 'LF'}`} onsave={() => void saveEdit()} />
         {#if edErr}<div class="err-note">{edErr}</div>{/if}
       {/if}
     </div>
     <div class="ed-footer">
-      <button type="button" class="btn ghost" onclick={() => (edOpen = false)} disabled={edSaving}>{edReadOnly ? '关闭' : '取消'}</button>
+      <span class="ed-save-note">{edSaving ? '正在保存到服务器…' : '仅在点击保存时写入远端；不会自动格式化。'}</span>
+      <button type="button" class="btn ghost" onclick={() => void closeEdit()} disabled={edSaving || edFormatting}>关闭</button>
       {#if !edReadOnly && !edLoading}
-        <button type="button" class="btn primary" onclick={saveEdit} disabled={edSaving}>{edSaving ? '保存中…' : '保存'}</button>
+        <button type="button" class="btn primary" onclick={saveEdit} disabled={edSaving || edFormatting || edClosing || !edDirty}>{edSaving ? '保存中…' : '保存'}</button>
       {/if}
     </div>
   </div>
@@ -18585,6 +18755,11 @@
   .fbtn.sm:hover:not(:disabled) { background: var(--accent-soft); }
   .fbtn.danger:hover:not(:disabled) { color: var(--err); background: var(--err-soft); }
   .files-note { flex: none; padding: 6px 16px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--border); }
+  .sftp-transfer-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sftp-transfer-note > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .sftp-transfer-note small, .sftp-drag-note small { display: block; margin-top: 4px; color: var(--muted); }
+  .sftp-transfer-note progress { display: block; width: 100%; height: 5px; margin-top: 6px; accent-color: var(--accent); }
+  .sftp-drag-note .btn { cursor: grab; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* 现在是个重试按钮：清掉按钮默认样式，只留 err-note 的红底红字 + 左对齐 + 手型 */
   .files-err { flex: none; margin: 10px 16px 0; display: block; width: calc(100% - 32px); text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
   .files-err:hover { background: var(--err-border); }
@@ -18641,11 +18816,18 @@
   .ctx-item.danger { color: var(--err); }
   .ctx-item.danger:hover:not(:disabled) { background: var(--err-soft); }
   /* 在线编辑器 */
-  .ed-modal { width: min(760px, 94vw); height: min(620px, 88vh); }
-  .ed-path { margin-left: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow-wrap: anywhere; }
-  .ed-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
-  .ed-ta { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; resize: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; color: var(--text); background: var(--rail); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; outline: none; white-space: pre; overflow-wrap: normal; overflow: auto; }
-  .ed-ta:focus { border-color: var(--border2); background: var(--bg); }
+  .modal.ed-modal { width: min(1080px, 94vw); height: min(760px, 88vh); }
+  .ed-modal.ed-full { inset: 38px 8px 8px; width: auto; height: auto; max-width: none; max-height: none; margin: 0; }
+  .ed-head { gap: 10px; }
+  .ed-heading { min-width: 0; flex: 1; display: grid; gap: 4px; }
+  .ed-heading > div { display: flex; align-items: center; gap: 10px; }
+  .ed-badge { color: var(--dim); background: var(--rail); border-radius: 5px; padding: 2px 6px; font-size: 10px; }
+  .ed-badge.dirty { color: var(--accent); background: var(--accent-soft); }
+  .btn.ed-expand { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0; }
+  .ed-path { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sheet-body.ed-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 0; overflow: hidden; padding: 0; }
+  .ed-body > .err-note { margin: 10px 14px; max-height: 100px; overflow: auto; flex: none; }
+  .ed-save-note { margin-right: auto; color: var(--dim); font-size: 11px; }
   .ed-footer { position: relative; z-index: 1; flex: none; display: flex; justify-content: flex-end; align-items: center; gap: 7px; padding: 10px 18px 14px; border-top: 1px solid var(--border); background: var(--bg); }
   /* 远端系统信息（页脚可点＝重新检测；下拉/设置里只读） */
   .foot-os, .cs-os { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }

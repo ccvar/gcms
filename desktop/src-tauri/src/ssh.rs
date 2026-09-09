@@ -98,6 +98,27 @@ fn validate_remove_dir_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Remote paths are POSIX even when Pilot runs on Windows. Archive the directory
+/// itself without dereferencing links, and never interpolate an unquoted name.
+fn directory_archive_command(remote: &str) -> Result<String, String> {
+    let path = remote.trim_end_matches('/');
+    if !path.starts_with('/')
+        || path.contains('\0')
+        || path.split('/').any(|p| matches!(p, "." | ".."))
+    {
+        return Err("请选择有效的非根目录下载".into());
+    }
+    let (parent, name) = path.rsplit_once('/').ok_or("目录路径无效")?;
+    if name.is_empty() {
+        return Err("不支持打包整个远端根目录".into());
+    }
+    Ok(format!(
+        "tar -czf - -C {} -- {}",
+        posix_shell_quote(if parent.is_empty() { "/" } else { parent }),
+        posix_shell_quote(name)
+    ))
+}
+
 /// 把任意远端路径安全地放进 POSIX shell 单引号。删除目录会在服务器上执行一次
 /// `rm -rf`，避免 SFTP 每删一个文件都跨网络往返。
 fn posix_shell_quote(value: &str) -> String {
@@ -898,8 +919,12 @@ impl SshSessions {
         if from.is_empty() || to.is_empty() || from == to {
             return Err("复制的来源和目标无效".to_string());
         }
+        let sftp = self.sftp(conn_id).await?;
+        if sftp.symlink_metadata(to).await.is_ok() {
+            return Err("目标已存在，请刷新后重新复制".into());
+        }
         let command = format!(
-            "cp -a -- {} {}",
+            "cp -an -- {} {}",
             posix_shell_quote(from),
             posix_shell_quote(to)
         );
@@ -968,6 +993,257 @@ impl SshSessions {
         sftp.create_dir(path)
             .await
             .map_err(|e| format!("新建目录失败: {e}"))
+    }
+
+    /// EXCLUDE + CREATE atomically refuses existing files, including symlinks.
+    pub async fn create_file(&self, conn_id: &str, path: &str) -> Result<(), String> {
+        use russh_sftp::protocol::OpenFlags;
+        use tokio::io::AsyncWriteExt as _;
+        let sftp = self.sftp(conn_id).await?;
+        let mut file = sftp
+            .open_with_flags(
+                path,
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+            )
+            .await
+            .map_err(|e| format!("新建文件失败（同名文件不会覆盖）: {e}"))?;
+        file.shutdown()
+            .await
+            .map_err(|e| format!("保存新文件失败: {e}"))
+    }
+
+    /// Stream tar output directly into a local staging file, never into memory or
+    /// a remote temporary archive. Only publish the file after tar exits cleanly.
+    pub async fn download_directory(
+        &self,
+        conn_id: &str,
+        remote: &str,
+        local: &str,
+        progress: &Channel<crate::sftp_transfer::Progress>,
+        cancel: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> Result<u64, String> {
+        use tokio::io::AsyncWriteExt as _;
+        let command = directory_archive_command(remote)?;
+        let sftp = self.sftp(conn_id).await?;
+        if !sftp
+            .symlink_metadata(remote)
+            .await
+            .map_err(|e| format!("读取目录失败: {e}"))?
+            .file_type()
+            .is_dir()
+        {
+            return Err("目标不是文件夹，请刷新后重试".into());
+        }
+        let handle = {
+            let g = self.map.lock().await;
+            g.get(conn_id)
+                .ok_or("会话未打开：请先连接远程终端")?
+                .handle
+                .clone()
+        };
+        let ch = handle
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("打开下载通道失败: {e}"))?;
+        ch.exec(true, command)
+            .await
+            .map_err(|e| format!("启动目录打包失败: {e}"))?;
+        let (mut reader, writer) = ch.split();
+        let temporary = tempfile::NamedTempFile::new_in(
+            std::path::Path::new(local).parent().ok_or("保存位置无效")?,
+        )
+        .map_err(|e| e.to_string())?;
+        let stage = temporary.path().to_path_buf();
+        let transfer = async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&stage)
+                .await
+                .map_err(|e| format!("创建下载临时文件失败: {e}"))?;
+            let mut total = 0_u64;
+            let mut status = None;
+            let mut stderr = Vec::new();
+            let mut last_progress = std::time::Instant::now();
+            let _ = progress.send(crate::sftp_transfer::Progress {
+                phase: "archive".into(),
+                ..Default::default()
+            });
+            while let Some(msg) = reader.wait().await {
+                match msg {
+                    ChannelMsg::Data { data } => {
+                        file.write_all(&data)
+                            .await
+                            .map_err(|e| format!("写入下载文件失败: {e}"))?;
+                        total += data.len() as u64;
+                        if last_progress.elapsed() >= Duration::from_millis(200) {
+                            let _ = progress.send(crate::sftp_transfer::Progress {
+                                phase: "archive".into(),
+                                bytes: total,
+                                ..Default::default()
+                            });
+                            last_progress = std::time::Instant::now();
+                        }
+                    }
+                    ChannelMsg::ExtendedData { data, ext: 1 } => {
+                        let remaining = 8192_usize.saturating_sub(stderr.len());
+                        stderr.extend_from_slice(&data[..data.len().min(remaining)]);
+                    }
+                    ChannelMsg::ExitStatus { exit_status } => status = Some(exit_status),
+                    _ => {}
+                }
+            }
+            if status != Some(0) || total == 0 {
+                return Err(format!(
+                    "目录打包未完成（状态 {status:?}）：{}",
+                    String::from_utf8_lossy(&stderr)
+                ));
+            }
+            file.sync_all()
+                .await
+                .map_err(|e| format!("保存下载文件失败: {e}"))?;
+            drop(file);
+            temporary
+                .persist_noclobber(local)
+                .map_err(|e| format!("保存压缩包失败: {e}"))?;
+            Ok(total)
+        };
+        let result = tokio::select! {
+            _ = cancel.changed() => Err("下载已取消，临时文件已清理".into()),
+            result = tokio::time::timeout(Duration::from_secs(3600), transfer) => match result {
+                Ok(result) => result,
+                Err(_) => Err("目录下载超时，请选择较小的文件夹重试".into()),
+            },
+        };
+        let _ = writer.close().await;
+        result
+    }
+
+    /// Download an uncompressed tree into an isolated local staging directory.
+    /// Never follow child symlinks (cycles/outside paths) or read device/FIFO files.
+    pub async fn download_tree(
+        &self,
+        conn_id: &str,
+        remote: &str,
+        local: &std::path::Path,
+        directory: bool,
+        progress: &Channel<crate::sftp_transfer::Progress>,
+    ) -> Result<u64, String> {
+        use crate::sftp_transfer::{local_name, Progress};
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let sftp = self.sftp(conn_id).await?;
+        let root = sftp
+            .metadata(remote)
+            .await
+            .map_err(|e| format!("读取下载目标失败: {e}"))?;
+        if root.file_type().is_dir() != directory
+            || (!root.file_type().is_dir() && !root.file_type().is_file())
+        {
+            return Err("下载目标类型已改变或不是普通文件，请刷新后重试".into());
+        }
+        let mut status = Progress {
+            phase: "scanning".into(),
+            ..Default::default()
+        };
+        let _ = progress.send(status.clone());
+        let mut files = Vec::new();
+        let mut dirs = Vec::new();
+        if directory {
+            let mut pending = vec![(
+                remote.trim_end_matches('/').to_string(),
+                std::path::PathBuf::new(),
+                0,
+            )];
+            let mut entries = 0_usize;
+            while let Some((remote_dir, relative, depth)) = pending.pop() {
+                if depth > 128 {
+                    return Err("目录层级过深，请选择较小目录或使用打包下载".into());
+                }
+                dirs.push(relative.clone());
+                for entry in sftp
+                    .read_dir(&remote_dir)
+                    .await
+                    .map_err(|e| format!("读取 {remote_dir} 失败: {e}"))?
+                {
+                    let name = entry.file_name();
+                    if name == "." || name == ".." {
+                        continue;
+                    }
+                    local_name(&name)?;
+                    entries += 1;
+                    if entries > 100000 {
+                        return Err("文件数量超过 100000，请拆分目录或使用打包下载".into());
+                    }
+                    let meta = entry.metadata();
+                    let child_remote = format!("{remote_dir}/{name}");
+                    let child_relative = relative.join(&name);
+                    if meta.file_type().is_dir() {
+                        pending.push((child_remote, child_relative, depth + 1));
+                    } else if meta.file_type().is_file() {
+                        status.total_bytes =
+                            status.total_bytes.saturating_add(meta.size.unwrap_or(0));
+                        files.push((child_remote, child_relative));
+                    } else {
+                        status.skipped += 1;
+                    }
+                }
+                status.total_files = files.len() as u64;
+                let _ = progress.send(status.clone());
+            }
+            // Parent directories first, independent of remote listing order.
+            dirs.sort_by_key(|path| path.components().count());
+            for dir in dirs {
+                tokio::fs::create_dir(local.join(dir))
+                    .await
+                    .map_err(|e| format!("创建下载目录失败: {e}"))?;
+            }
+        } else {
+            status.total_bytes = root.size.unwrap_or(0);
+            files.push((remote.to_string(), std::path::PathBuf::new()));
+        }
+        status.total_files = files.len() as u64;
+        status.phase = "downloading".into();
+        let _ = progress.send(status.clone());
+        let mut buffer = vec![0_u8; 128 * 1024];
+        let mut last_progress = std::time::Instant::now();
+        for (source, relative) in files {
+            let mut src = sftp
+                .open(&source)
+                .await
+                .map_err(|e| format!("打开 {source} 失败: {e}"))?;
+            let path = if directory {
+                local.join(relative)
+            } else {
+                local.to_path_buf()
+            };
+            let mut dst = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .await
+                .map_err(|e| format!("创建本地文件失败（可能存在大小写重名）：{e}"))?;
+            loop {
+                let n = src
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|e| format!("读取 {source} 失败: {e}"))?;
+                if n == 0 {
+                    break;
+                }
+                dst.write_all(&buffer[..n])
+                    .await
+                    .map_err(|e| format!("写入下载文件失败: {e}"))?;
+                status.bytes += n as u64;
+                if last_progress.elapsed() >= Duration::from_millis(200) {
+                    let _ = progress.send(status.clone());
+                    last_progress = std::time::Instant::now();
+                }
+            }
+            dst.sync_all().await.map_err(|e| e.to_string())?;
+            status.files += 1;
+            let _ = progress.send(status.clone());
+        }
+        Ok(status.skipped)
     }
 
     /// 下载：远程 → 本地，流式拷贝（大文件不整块进内存，不走 read_file 的闸门）。
@@ -1061,6 +1337,99 @@ impl SshSessions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_types_do_not_classify_symlinks_or_sockets_as_files_or_directories() {
+        use russh_sftp::protocol::FileAttributes;
+        for mode in [0o120777, 0o140777, 0o060600, 0o020600, 0o010600] {
+            let meta = FileAttributes {
+                permissions: Some(mode),
+                ..Default::default()
+            };
+            assert!(!meta.file_type().is_file());
+            assert!(!meta.file_type().is_dir());
+        }
+        assert!(FileAttributes {
+            permissions: Some(0o100644),
+            ..Default::default()
+        }
+        .file_type()
+        .is_file());
+        assert!(FileAttributes {
+            permissions: Some(0o040755),
+            ..Default::default()
+        }
+        .file_type()
+        .is_dir());
+    }
+
+    #[test]
+    fn directory_archive_rejects_root_and_quotes_names() {
+        for path in [
+            "",
+            "/",
+            "///",
+            "relative/path",
+            "/srv/../etc",
+            "/srv/./site",
+            "/srv/bad\0name",
+        ] {
+            assert!(directory_archive_command(path).is_err());
+        }
+        assert_eq!(
+            directory_archive_command("/etc/conf.d/").unwrap(),
+            "tar -czf - -C '/etc' -- 'conf.d'"
+        );
+        assert_eq!(
+            directory_archive_command("/-site").unwrap(),
+            "tar -czf - -C '/' -- '-site'"
+        );
+        assert_eq!(
+            directory_archive_command("/srv/a'b").unwrap(),
+            "tar -czf - -C '/srv' -- 'a'\"'\"'b'"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_archive_contains_hidden_files_and_does_not_follow_symlinks() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let root =
+            std::env::temp_dir().join(format!("pilot-archive-test-{}", uuid::Uuid::new_v4()));
+        let dir = root.join("-folder ' with spaces");
+        std::fs::create_dir_all(dir.join("empty")).unwrap();
+        std::fs::write(dir.join(".hidden"), "keep me").unwrap();
+        std::fs::create_dir(root.join("outside")).unwrap();
+        std::fs::write(root.join("outside/should-not-be-included"), "outside").unwrap();
+        std::os::unix::fs::symlink(root.join("outside"), dir.join("link")).unwrap();
+        let command = directory_archive_command(dir.to_str().unwrap()).unwrap();
+        let output = Command::new("sh").args(["-c", &command]).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut list = Command::new("tar")
+            .args(["-tzf", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        list.stdin
+            .take()
+            .unwrap()
+            .write_all(&output.stdout)
+            .unwrap();
+        let contents = list.wait_with_output().unwrap();
+        assert!(contents.status.success());
+        let contents = String::from_utf8_lossy(&contents.stdout);
+        assert!(contents.contains("/.hidden"));
+        assert!(contents.contains("/empty/"));
+        assert!(contents.contains("/link"));
+        assert!(!contents.contains("should-not-be-included"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn remove_dir_rejects_dangerous_directory_paths() {
