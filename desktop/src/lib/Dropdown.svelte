@@ -19,8 +19,9 @@
     tone = '',
     bare = false,
     tip = '',
+    ariaLabel = '',
     onchange,
-  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; menuCompact?: boolean; searchable?: boolean; keepOpenOnSelect?: boolean; tone?: string; bare?: boolean; tip?: string; onchange?: (value: string) => void } = $props();
+  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; menuCompact?: boolean; searchable?: boolean; keepOpenOnSelect?: boolean; tone?: string; bare?: boolean; tip?: string; ariaLabel?: string; onchange?: (value: string) => void } = $props();
 
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
@@ -85,9 +86,39 @@
     }
     open = false;
     hideTipBubble();
+    root?.querySelector<HTMLButtonElement>('.dd-trigger')?.focus();
   }
   function onDoc(e: MouseEvent) { if (root && !root.contains(e.target as Node)) open = false; }
-  function onKey(e: KeyboardEvent) { if (e.key === 'Escape') { open = false; hideTipBubble(); } }
+  function onKey(e: KeyboardEvent) {
+    if (!open) return;
+    if (e.key === 'Escape') {
+      // Consume Escape before it reaches a containing editor/dialog.
+      e.preventDefault(); e.stopPropagation();
+      open = false; hideTipBubble();
+      root?.querySelector<HTMLButtonElement>('.dd-trigger')?.focus();
+      return;
+    }
+    if (!root?.contains(e.target as Node)) return;
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+    if (e.target === searchEl && (e.key === 'Home' || e.key === 'End')) return;
+    const items = Array.from(root.querySelectorAll<HTMLButtonElement>('.dd-opt:not(:disabled)'));
+    if (!items.length) return;
+    e.preventDefault(); e.stopPropagation();
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
+      : e.key === 'ArrowDown' ? (index + 1) % items.length : (index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length);
+    items[next].focus();
+  }
+  function onTriggerKey(e: KeyboardEvent) {
+    if (disabled || open || !['ArrowDown', 'ArrowUp'].includes(e.key)) return;
+    e.preventDefault();
+    toggle();
+    requestAnimationFrame(() => {
+      const items = Array.from(root?.querySelectorAll<HTMLButtonElement>('.dd-opt:not(:disabled)') ?? []);
+      const selected = items.find(item => item.classList.contains('sel'));
+      (selected ?? (e.key === 'ArrowUp' ? items.at(-1) : items[0]))?.focus();
+    });
+  }
   // 只在「菜单之外」的滚动才收起；菜单自身内部滚动（选项多时）不关闭。
   function onScroll(e: Event) {
     const menu = root?.querySelector('.dd-menu');
@@ -118,7 +149,7 @@
        ★ 菜单开着时必须把它摘掉：气泡是 z-index:130、菜单才 90，两个又都往上弹 —— 不摘的话
        气泡正好盖住菜单最下面那条（实测盖的就是「全自动」，即最要紧的那条）。
        同款做法见 UsageRing.svelte 的 `use:tip={open ? '' : tipText}`。 -->
-  <button type="button" class="dd-trigger" class:open class:compact class:bare class:tone-warn={tone === 'warn'} class:tone-danger={tone === 'danger'} onclick={toggle} {disabled} data-tip={open ? null : tip || null}>
+  <button type="button" class="dd-trigger" class:open class:compact class:bare class:tone-warn={tone === 'warn'} class:tone-danger={tone === 'danger'} onclick={toggle} onkeydown={onTriggerKey} {disabled} aria-label={ariaLabel || undefined} aria-haspopup="listbox" aria-expanded={open} data-tip={open ? null : tip || null}>
     <span class="dd-label" class:placeholder={!current}>
       {#if current}{@render lead(current)}{/if}{current?.short ?? current?.label ?? placeholder}
     </span>
@@ -127,17 +158,17 @@
     </svg>
   </button>
   {#if open}
-    <div class="dd-menu" class:menu-compact={menuCompact} style={menuStyle}>
+    <div class="dd-menu" class:menu-compact={menuCompact} style={menuStyle} role="listbox" aria-label={ariaLabel || placeholder}>
       {#if showSearch}
         <div class="dd-search">
           <input bind:this={searchEl} bind:value={query} placeholder="搜索站点…" spellcheck="false" autocapitalize="off" autocorrect="off" />
         </div>
       {/if}
       {#each filtered as o (o.value)}
-        <button type="button" class="dd-opt" class:sel={o.value === value} class:disabled={o.disabled} onclick={() => pick(o)} data-tip={o.tip || null}>
+        <button type="button" class="dd-opt" class:sel={o.value === value} class:disabled={o.disabled} disabled={o.disabled} role="option" aria-selected={o.value === value} onclick={() => pick(o)} data-tip={o.tip || null}>
           {@render lead(o)}
           <span class="dd-otext"><b>{o.label}</b>{#if o.sub}<small class:danger={o.tone === 'danger'} class:warn={o.tone === 'warn'}>{o.sub}</small>{/if}</span>
-          {#if o.value === value}<span class="dd-check">✓</span>{/if}
+          {#if o.value === value}<span class="dd-check" aria-hidden="true">✓</span>{/if}
         </button>
       {/each}
       {#if filtered.length === 0}<div class="dd-empty">无匹配站点</div>{/if}

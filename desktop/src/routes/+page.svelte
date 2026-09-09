@@ -18020,7 +18020,7 @@
   <div class="modal ed-modal" class:ed-full={edFull} use:dialogGeometry={{ ...DIALOG_GEOMETRY.fileEditor, enabled: !edFull }} role="dialog" aria-modal="true" aria-label={`编辑文件 ${edPath}`} aria-busy={edSaving}>
     <header class="sheet-head ed-head">
       <div class="ed-heading"><div><b>编辑文件</b><span class="ed-badge" class:dirty={edDirty}>{edDirty ? '未保存' : edSaved ? '已保存' : '远程文件'}</span></div><small class="dim ed-path" title={edPath}>{edPath}</small></div>
-      <button type="button" class="btn ghost ed-expand" title={edFull ? '退出全屏' : '全屏编辑'} aria-label={edFull ? '退出全屏' : '全屏编辑'} aria-pressed={edFull} onclick={() => { edFull = !edFull; }}>
+      <button type="button" class="ed-expand" title={edFull ? '退出全屏' : '全屏编辑'} aria-label={edFull ? '退出全屏' : '全屏编辑'} aria-pressed={edFull} onclick={() => { edFull = !edFull; }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           {#if edFull}
             <path d="M3 8h5V3M16 3v5h5M21 16h-5v5M8 21v-5H3" />
@@ -18823,7 +18823,9 @@
   .ed-heading > div { display: flex; align-items: center; gap: 10px; }
   .ed-badge { color: var(--dim); background: var(--rail); border-radius: 5px; padding: 2px 6px; font-size: 10px; }
   .ed-badge.dirty { color: var(--accent); background: var(--accent-soft); }
-  .btn.ed-expand { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0; }
+  .ed-expand { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 5px; background: transparent; box-shadow: none; color: var(--dim); cursor: pointer; }
+  .ed-expand:hover { background: var(--rail); color: var(--text); }
+  .ed-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .ed-path { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sheet-body.ed-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 0; overflow: hidden; padding: 0; }
   .ed-body > .err-note { margin: 10px 14px; max-height: 100px; overflow: auto; flex: none; }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import Dropdown from './Dropdown.svelte';
   import { detectEditorLanguage, editorLanguages, editorFormatParsers, type EditorLanguage } from './fileEditor';
   import type { createCodeEditor } from './codeEditorRuntime';
 
@@ -15,6 +16,8 @@
   let error = $state('');
   let status = $state({ line: 1, column: 1, lines: 1, undo: false, redo: false });
   let destroyed = false;
+  const languageOptions = editorLanguages.map(([value, label]) => ({ value, label }));
+  const indentOptions = [{ value: '  ', label: '2 空格' }, { value: '    ', label: '4 空格' }, { value: '\t', label: 'Tab' }];
 
   onMount(() => {
     language = detectEditorLanguage(path);
@@ -62,9 +65,7 @@
 
 <div class="file-code-editor" style:--editor-font-size={`${fontSize}px`} style:--editor-indent={`${indentation === '\t' ? 4 : indentation.length}ch`}>
   <div class="editor-tools" role="toolbar" aria-label="文件编辑工具">
-    <label class="language-picker"><span>语言</span><select aria-label="文件语言" bind:value={language} disabled={busy}>
-      {#each editorLanguages as [id, label]}<option value={id}>{label}</option>{/each}
-    </select></label>
+    <div class="editor-picker"><span>语言</span><Dropdown compact menuCompact ariaLabel="文件语言" value={language} options={languageOptions} disabled={busy} onchange={value => { language = value as EditorLanguage; }} /></div>
     <div class="tool-group">
       <button type="button" onclick={() => editor?.undo()} disabled={!status.undo || readonly || busy} title="撤销 · Ctrl / ⌘ Z">撤销</button>
       <button type="button" onclick={() => editor?.redo()} disabled={!status.redo || readonly || busy} title="重做 · Ctrl / ⌘ Shift Z">重做</button>
@@ -74,9 +75,7 @@
       title={editorFormatParsers[language] ? '仅修改编辑区，不自动保存；可撤销' : '此语言暂无可靠格式化支持，请使用 Tab / Shift+Tab 调整缩进'}>{busy ? '格式化中…' : '格式化'}</button>
     <div class="tool-group appearance">
       <button type="button" class:active={wrap} aria-pressed={wrap} onclick={() => { wrap = !wrap; }}>自动换行</button>
-      <label><span>缩进</span><select aria-label="缩进方式" bind:value={indentation} disabled={busy}>
-        <option value="  ">2 空格</option><option value="    ">4 空格</option><option value={'\t'}>Tab</option>
-      </select></label>
+      <div class="editor-picker"><span>缩进</span><Dropdown compact menuCompact ariaLabel="缩进方式" bind:value={indentation} options={indentOptions} disabled={busy} /></div>
       <button type="button" onclick={() => { fontSize = Math.max(11, fontSize - 1); }} disabled={fontSize <= 11} aria-label="缩小编辑器字号">A−</button>
       <span class="font-size">{fontSize}</span>
       <button type="button" onclick={() => { fontSize = Math.min(22, fontSize + 1); }} disabled={fontSize >= 22} aria-label="放大编辑器字号">A+</button>
@@ -94,16 +93,17 @@
 <style>
   .file-code-editor { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg, #fff); }
   .editor-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 9px 14px; border-bottom: 1px solid var(--border, #e8e5df); background: var(--rail, #f8f7f4); flex: none; }
-  .editor-tools label, .tool-group { display: inline-flex; align-items: center; gap: 5px; }
-  .editor-tools label span { color: var(--dim, #77746c); font-size: 11px; }
+  .editor-picker, .tool-group { display: inline-flex; align-items: center; gap: 5px; }
+  .editor-picker { --chip-h: 28px; }
+  .editor-picker > span { color: var(--dim, #77746c); font-size: 11px; }
+  .editor-picker :global(.dd-trigger.compact) { font-size: 11.5px; border-radius: 5px; }
   .tool-group { border-left: 1px solid var(--border, #e8e5df); padding-left: 7px; margin-left: 2px; }
   .appearance { margin-left: auto; }
-  button, select { font: inherit; font-size: 11.5px; line-height: 1.3; color: var(--text, #302d28); background: transparent; border: 1px solid transparent; border-radius: 5px; min-height: 28px; padding: 4px 7px; }
+  button { font: inherit; font-size: 11.5px; line-height: 1.3; color: var(--text, #302d28); background: transparent; border: 1px solid transparent; border-radius: 5px; min-height: 28px; padding: 4px 7px; }
   button { cursor: pointer; white-space: nowrap; }
-  select { background: var(--bg, #fff); border-color: var(--border, #e8e5df); padding-right: 3px; }
   button:hover:not(:disabled), button.active { background: var(--accent-soft, #f3ebe5); color: var(--accent, #a34635); }
   button:disabled { opacity: .4; cursor: default; }
-  button:focus-visible, select:focus-visible { outline: 2px solid var(--accent, #a34635); outline-offset: 1px; }
+  button:focus-visible { outline: 2px solid var(--accent, #a34635); outline-offset: 1px; }
   .font-size { font-size: 11px; color: var(--dim, #77746c); font-variant-numeric: tabular-nums; }
   .code-surface { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
   .code-surface :global(.cm-editor) { height: 100%; color: var(--text, #302d28); background: var(--bg, #fff); font-size: var(--editor-font-size); }
