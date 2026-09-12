@@ -4,6 +4,7 @@ mod brains;
 mod bridge;
 mod cf;
 mod cf_templates;
+mod codex_environment;
 mod convo;
 mod discovery;
 mod gcms_remote;

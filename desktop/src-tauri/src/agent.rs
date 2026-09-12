@@ -685,6 +685,12 @@ fn codex_server_environment_key(
     hasher.update([0]);
     hasher.update(work_dir.as_bytes());
     hasher.update([0]);
+    hasher.update(conn.kind.as_bytes());
+    hasher.update([0]);
+    hasher.update(conn.api_base.as_bytes());
+    hasher.update([0]);
+    hasher.update(crate::codex_environment::POLICY_VERSION.as_bytes());
+    hasher.update([0]);
     hasher.update(api_key.as_bytes());
     if let Some(token) = gcms_unlock(&conn.id) {
         hasher.update([0]);
@@ -725,6 +731,7 @@ async fn codex_app_server(
     api_key: &str,
     lease: Option<&crate::bridge::Lease>,
 ) -> Result<Arc<CodexAppServer>, String> {
+    crate::codex_environment::validate_credentials(&conn.kind, &conn.api_base, api_key)?;
     let key = codex_server_environment_key(conn, work_dir, api_key, lease);
     let scope = key
         .rsplit_once(':')
@@ -767,6 +774,7 @@ async fn codex_app_server(
 
     let mut cmd = Command::new(crate::brains::resolve_bin("codex"));
     cmd.args(["app-server", "--stdio"]);
+    crate::codex_environment::apply_cli(&mut cmd, &conn.kind);
     apply_env_cwd(&mut cmd, conn, work_dir, api_key, lease);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -897,6 +905,26 @@ async fn codex_app_server(
         )
         .await?;
     server.notify("initialized", None)?;
+    if conn.kind == "gcms" {
+        // Read only in memory. Never log the returned config: a user may have
+        // put credentials in `set`. Known policy failures must not fall back to
+        // exec and repeat the same failure (or use another connection's key).
+        let effective = server.request("config/read", serde_json::json!({
+            "includeLayers": false, "cwd": work_dir
+        }), std::time::Duration::from_secs(10)).await;
+        match effective {
+            Ok(effective) => {
+                if let Err(error) = crate::codex_environment::validate_effective_policy(&effective["config"]) {
+                    server.shutdown().await;
+                    return Err(error);
+                }
+            }
+            Err(_) => {
+                server.shutdown().await;
+                return Err(format!("{}：无法读取 Codex 生效配置，未启动任务。请重启 Pilot 后重试，仍失败请检查 Codex 版本与配置。", crate::codex_environment::VALIDATION_ERROR));
+            }
+        }
+    }
     let mut guard = servers.lock().await;
     // 仍有其它对话在执行的旧环境服务不能强杀；它会在后续调用进入本函数时，
     // sinks 变空后由上面的显式 shutdown 回收。
@@ -1271,12 +1299,13 @@ async fn try_run_codex_app_server(
     };
     let server = match codex_app_server(conn, work_dir, api_key, lease).await {
         Ok(server) => server,
+        Err(error) if error.starts_with(crate::codex_environment::VALIDATION_ERROR) => {
+            return CodexAppServerAttempt::Completed(failed_turn_result(session_ref, error, &channel));
+        }
         Err(error) => return CodexAppServerAttempt::Unavailable(error),
     };
     let sandbox = codex_sandbox(mode);
-    let config = serde_json::json!({
-        "sandbox_workspace_write": {"network_access": true}
-    });
+    let config = crate::codex_environment::thread_config(&conn.kind);
     let mut thread_id = session_ref.to_string();
 
     if is_first || thread_id.trim().is_empty() {
@@ -2513,7 +2542,9 @@ pub(crate) fn apply_env_cwd(
         }
     } else {
         cmd.env("GCMS_API_BASE", &conn.api_base)
-            .env("GCMS_API_KEY", api_key);
+            .env("GCMS_API_KEY", api_key)
+            // A revoked/expired unlock must not leak in from Pilot's parent.
+            .env_remove("GCMS_CONTROL_UNLOCK_TOKEN");
         if let Some(token) = gcms_unlock(&conn.id) {
             cmd.env("GCMS_CONTROL_UNLOCK_TOKEN", token);
         }
@@ -2630,6 +2661,7 @@ fn build_codex(
     perm: PermMode,
     lease: Option<&crate::bridge::Lease>,
 ) -> Result<(Command, String), String> {
+    crate::codex_environment::validate_credentials(&conn.kind, &conn.api_base, api_key)?;
     // codex 无头没有逐工具回传 UI 的能力，权限档位只能落到 sandbox 粗粒度（精细批准以 claude 为主）。
     // plan＝只读；full＝完全放开；ask/auto＝可写工作区（无法逐命令确认）。
     let sandbox = match perm {
@@ -2681,6 +2713,7 @@ fn build_codex(
     }
     // `-` 让 Codex 从 stdin 读完整提示词。不要把 prompt 直接作为参数：Windows 的
     // codex.cmd 无法接收含换行的参数，首轮系统提示必然会触发该限制。
+    crate::codex_environment::apply_cli(&mut cmd, &conn.kind);
     cmd.arg("-");
     apply_env_cwd(&mut cmd, conn, work_dir, api_key, lease);
     cmd.stdin(Stdio::piped())
@@ -3552,6 +3585,46 @@ mod tests {
             Some(true),
             "excludeTurns 会被 Codex 拒绝，除非初始化时协商 experimentalApi"
         );
+    }
+
+    #[test]
+    fn gcms_codex_environment_survives_resume_and_unlock_changes() {
+        let mut conn: Connection = serde_json::from_value(json!({
+            "id": "test-gcms-environment", "name": "test", "kind": "gcms",
+            "api_base": "https://example.invalid", "skill_dir": ".",
+            "key_prefix": "", "key_kind": "", "created_at": ""
+        })).unwrap();
+        let initial = codex_server_environment_key(&conn, ".", "test-only-key", None);
+        for is_first in [true, false] {
+            let (cmd, _) = build_codex(&conn, "", "", "thread-test", is_first,
+                None, "test", "test-only-key", ".", PermMode::Plan, None).unwrap();
+            let args: Vec<_> = cmd.as_std().get_args().map(|s| s.to_string_lossy()).collect();
+            assert!(args.iter().any(|s| s.starts_with("shell_environment_policy={")));
+            assert!(args.iter().all(|s| !s.contains("test-only-key")));
+            assert_eq!(args.last().map(|s| s.as_ref()), Some("-"));
+            assert!(args.iter().any(|s| s.contains("read-only")));
+            let env: HashMap<_, _> = cmd.as_std().get_envs().collect();
+            assert_eq!(env.get(std::ffi::OsStr::new("GCMS_API_KEY")),
+                Some(&Some(std::ffi::OsStr::new("test-only-key"))));
+            assert_eq!(env.get(std::ffi::OsStr::new("GCMS_CONTROL_UNLOCK_TOKEN")), Some(&None));
+        }
+        conn.api_base = "https://changed.invalid".into();
+        assert_ne!(initial, codex_server_environment_key(&conn, ".", "test-only-key", None));
+        conn.api_base = "https://example.invalid".into();
+        store_gcms_unlock(&conn.id, "test-only-unlock".into(), u64::MAX);
+        let unlocked = codex_server_environment_key(&conn, ".", "test-only-key", None);
+        assert_ne!(initial, unlocked);
+        let (cmd, _) = build_codex(&conn, "", "", "thread-test", false,
+            None, "test", "test-only-key", ".", PermMode::Auto, None).unwrap();
+        let env: HashMap<_, _> = cmd.as_std().get_envs().collect();
+        assert_eq!(env.get(std::ffi::OsStr::new("GCMS_CONTROL_UNLOCK_TOKEN")),
+            Some(&Some(std::ffi::OsStr::new("test-only-unlock"))));
+        store_gcms_unlock(&conn.id, "expired-test-unlock".into(), 0);
+        assert_eq!(initial, codex_server_environment_key(&conn, ".", "test-only-key", None));
+        let (cmd, _) = build_codex(&conn, "", "", "thread-test", false,
+            None, "test", "test-only-key", ".", PermMode::Auto, None).unwrap();
+        let env: HashMap<_, _> = cmd.as_std().get_envs().collect();
+        assert_eq!(env.get(std::ffi::OsStr::new("GCMS_CONTROL_UNLOCK_TOKEN")), Some(&None));
     }
 
     #[test]
