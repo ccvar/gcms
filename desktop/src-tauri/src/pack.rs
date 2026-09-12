@@ -334,17 +334,7 @@ impl ConnStore {
             // 钥匙串和连接摘要，而不是新建连接、把历史会话留在旧连接下。
             let prefix = keychain::key_prefix(&api_key);
             let mut conns = self.list();
-            let exact = conns
-                .iter()
-                .position(|c| c.api_base == api_base && c.key_prefix == prefix);
-            let same_base: Vec<usize> = conns
-                .iter()
-                .enumerate()
-                .filter_map(|(index, c)| {
-                    (c.kind == "gcms" && c.api_base == api_base).then_some(index)
-                })
-                .collect();
-            let target = exact.or_else(|| (same_base.len() == 1).then_some(same_base[0]));
+            let target = gcms_import_target(&conns, &api_base, &prefix);
             if let Some(target) = target {
                 let dup = &mut conns[target];
                 keychain::set_key(&dup.id, &api_key)?;
@@ -1261,6 +1251,26 @@ fn unquote(s: &str) -> &str {
     }
 }
 
+/// Prefer an exact GCMS connection; otherwise rotate the key only when the
+/// platform has a single existing connection. No match means create a new one.
+fn gcms_import_target(conns: &[Connection], api_base: &str, prefix: &str) -> Option<usize> {
+    let mut matching = conns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.kind == "gcms" && c.api_base == api_base);
+    if let Some((index, _)) = matching.clone().find(|(_, c)| c.key_prefix == prefix) {
+        return Some(index);
+    }
+    // `then_some(same_base[0])` evaluates the index even when the condition is
+    // false, panicking on first import. Consume the iterator without indexing.
+    let (index, _) = matching.next()?;
+    if matching.next().is_none() {
+        Some(index)
+    } else {
+        None
+    }
+}
+
 fn default_name(api_base: &str) -> String {
     api_base
         .trim_start_matches("https://")
@@ -1283,6 +1293,53 @@ fn chrono_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn import_target_fixture(kind: &str, base: &str, prefix: &str) -> Connection {
+        serde_json::from_value(serde_json::json!({
+            "id": "fixture", "name": "fixture", "kind": kind,
+            "api_base": base, "skill_dir": ".", "key_prefix": prefix,
+            "key_kind": "gcmsp_", "created_at": "0"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn import_target_first_platform_does_not_index_an_empty_list() {
+        assert_eq!(gcms_import_target(&[], "https://new.invalid", "new"), None);
+        let conns = [import_target_fixture("gcms", "https://other.invalid", "new")];
+        assert_eq!(gcms_import_target(&conns, "https://new.invalid", "new"), None);
+    }
+
+    #[test]
+    fn import_target_rotates_only_the_single_matching_platform() {
+        let conns = [
+            import_target_fixture("gcms", "https://other.invalid", "new"),
+            import_target_fixture("gcms", "https://site.invalid", "old"),
+        ];
+        assert_eq!(gcms_import_target(&conns, "https://site.invalid", "old"), Some(1));
+        assert_eq!(gcms_import_target(&conns, "https://site.invalid", "new"), Some(1));
+    }
+
+    #[test]
+    fn import_target_prefers_exact_match_when_platform_is_ambiguous() {
+        let conns = [
+            import_target_fixture("gcms", "https://site.invalid", "first"),
+            import_target_fixture("gcms", "https://site.invalid", "second"),
+        ];
+        assert_eq!(gcms_import_target(&conns, "https://site.invalid", "second"), Some(1));
+        assert_eq!(gcms_import_target(&conns, "https://site.invalid", "first"), Some(0));
+        assert_eq!(gcms_import_target(&conns, "https://site.invalid", "new"), None);
+    }
+
+    #[test]
+    fn import_target_never_overwrites_a_different_connection_type() {
+        let conns = [
+            import_target_fixture("cloudflare", "https://site.invalid", "new"),
+            import_target_fixture("ssh", "https://site.invalid", "new"),
+            import_target_fixture("workspace", "https://site.invalid", "new"),
+        ];
+        assert_eq!(gcms_import_target(&conns, "https://site.invalid", "new"), None);
+    }
 
     #[test]
     fn connection_remark_rules() {
