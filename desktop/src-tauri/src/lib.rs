@@ -1,5 +1,6 @@
 mod acp;
 mod agent;
+mod editorial;
 mod brains;
 mod bridge;
 mod cf;

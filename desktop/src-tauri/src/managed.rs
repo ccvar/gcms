@@ -700,7 +700,7 @@ similar 命令报错（服务端较旧）时，改用 `node scripts/gcms.js list
 但查重不看服务端新旧：替代检索也必须执行，不得跳过。\n\
 7. 废弃草稿不许静默遗弃：确认不再需要的草稿，用 `node scripts/gcms.js discard posts <id> --reason \"一句话理由\"` 标记报废\
 （理由写给管理员看，如「与 #12 重复，内容已并入」「选题放弃：搜索数据不支持」）；标记只对草稿有效，删除永远由站点主人执行；\
-命令报错（服务端较旧）时，改为在该草稿正文开头写一行【建议弃用：理由】——这不算失败。\n",
+命令报错（服务端较旧）时，只在会话里报告草稿 ID 与建议弃用理由，不把内部说明写入正文——这不算失败。\n",
         plan_snippet(plan, 2000),
         lvl = level_label(level),
         mode = if auto_publish { "" } else { "：一切产出只到草稿，由站点主人审核发布" },
@@ -792,9 +792,10 @@ pub fn apply_daily_prompt(custom: &str, generated: String, level: &str) -> Strin
         "- L0 只允许创建或修改草稿（status=draft），绝不发布或定时发布。"
     };
     format!(
-        "{}\n\n【计划托管系统强制边界（不可覆盖）】\n{publication}\n{}",
+        "{}\n\n【计划托管系统强制边界（不可覆盖）】\n{publication}\n{}\n\n{}",
         selected_prompt(custom, generated),
-        shared_write_boundary()
+        shared_write_boundary(),
+        crate::editorial::PUBLIC_COPY_POLICY
     )
 }
 
@@ -802,9 +803,10 @@ pub fn apply_daily_prompt(custom: &str, generated: String, level: &str) -> Strin
 pub fn apply_audit_prompt(custom: &str, generated: String) -> String {
     format!(
         "{}\n\n【计划托管审计强制边界（不可覆盖）】\n\
-- 只允许创建一篇本次审计纪要草稿，不得发布，不得修改、下线或删除其他内容。\n{}",
+- 只允许创建一篇本次审计纪要草稿，不得发布，不得修改、下线或删除其他内容。\n{}\n\n{}",
         selected_prompt(custom, generated),
-        shared_write_boundary()
+        shared_write_boundary(),
+        crate::editorial::PUBLIC_COPY_POLICY
     )
 }
 
@@ -1860,10 +1862,12 @@ mod tests {
         assert!(!daily.contains("90 天运营计划"));
         assert!(daily.contains("这是用户编辑后的完整每日任务"));
         assert!(daily.contains("应直接发布"));
+        assert!(daily.ends_with(crate::editorial::PUBLIC_COPY_POLICY));
 
         let audit = apply_audit_prompt("用户审计任务", audit_prompt("科技站"));
         assert!(audit.contains("用户审计任务"));
         assert!(audit.contains("只允许创建一篇本次审计纪要草稿"));
+        assert!(audit.ends_with(crate::editorial::PUBLIC_COPY_POLICY));
 
         let report = apply_report_prompt("用户周报任务", report_prompt("科技站", "AI 周刊"));
         assert!(report.contains("用户周报任务"));
@@ -2019,8 +2023,8 @@ mod tests {
         assert!(p.contains("理由写给管理员看"));
         assert!(p.contains("标记只对草稿有效，删除永远由站点主人执行"));
         assert!(
-            p.contains("写一行【建议弃用：理由】——这不算失败"),
-            "旧服务端降级：正文开头写建议弃用"
+            p.contains("只在会话里报告草稿 ID 与建议弃用理由，不把内部说明写入正文"),
+            "旧服务端降级仍须隔离管理备注与文章正文"
         );
         let a = audit_prompt("s");
         assert!(a.contains("6. 无主草稿排查"));

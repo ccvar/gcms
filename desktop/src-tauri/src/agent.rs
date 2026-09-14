@@ -1910,7 +1910,10 @@ pub async fn run_turn(
 ) -> TurnResult {
     // 用户消息仍按原文写入 conversations.json；这里只增强发给执行器的临时副本。
     // 每轮注入才能覆盖升级前已经建立的 Claude/Codex session。
-    let mut message = conversation_completion_policy(&message, &conn.kind);
+    let mut message = crate::editorial::for_turn(
+        conversation_completion_policy(&message, &conn.kind),
+        &conn.kind,
+    );
     // 通用技能由技能工作区的会话显式选择；普通站点/自由对话不再自动注入全部技能。
     // 每轮重新注入，既覆盖 CLI resume，也能在技能后来被停用时立即停止使用。
     match crate::skills::selected_skill_prompt(&data_dir, &selected_skill_ids) {

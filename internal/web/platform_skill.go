@@ -230,6 +230,8 @@ func platformAssistantBriefMarkdown(opts automationSkillOptions) string {
 	lines := []string{
 		"# 给 AI 助手的说明（平台 / 多站点）",
 		"",
+		publicCopyPolicy,
+		"",
 		"用途：" + name,
 		"",
 		"你手上是一把 GCMS **平台密钥**，可以在授权范围内管理站点生命周期、主题、GCMS 内部域名和内容。必须先读取实时能力，再预检查，再确认执行。",
@@ -286,6 +288,8 @@ func platformSkillMarkdown(apiBase string) string {
 		"---",
 		"",
 		"# GCMS Platform Assistant（多站点）",
+		"",
+		publicCopyPolicy,
 		"",
 		"你是 GCMS 平台运营助手。你持有一把可管理多个站点的平台密钥。核心流程是：**读能力 → 发现站点 → 预检查 → 用户确认 → 幂等执行**。你可以使用公开控制 API 管理站点、主题和 GCMS 内部域名，但不能接触后台密码，也不能绕过 Pilot 操作服务器、Cloudflare 或密钥。",
 		"",
