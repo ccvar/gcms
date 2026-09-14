@@ -1092,7 +1092,7 @@ fn send_codex_app_activity(
 }
 
 fn handle_codex_app_notification(method: &str, params: &serde_json::Value, sink: &CodexTurnSink) {
-    if let Some(request) = codex_gcms_unlock_request(params) {
+    if let Some(request) = codex_app_gcms_unlock_request(method, params) {
         send_gcms_unlock_request(&sink.channel, request);
     }
     {
@@ -3222,6 +3222,29 @@ fn claude_compact_pre_tokens(ev: &serde_json::Value) -> Option<u64> {
     })
 }
 
+/// App-server uses a separate method plus camelCase item/output fields, unlike
+/// exec --json's `type: item.completed` envelope. Only completed tool outputs
+/// may request native authorization; never scan commands, arguments or prose.
+fn codex_app_gcms_unlock_request(
+    method: &str,
+    params: &serde_json::Value,
+) -> Option<GcmsUnlockRequest> {
+    if method != "item/completed" {
+        return None;
+    }
+    let item = params.get("item")?;
+    let result_keys: &[&str] = match item.get("type")?.as_str()? {
+        "commandExecution" => &["aggregatedOutput"],
+        "mcpToolCall" => &["result"],
+        "dynamicToolCall" => &["contentItems"],
+        "functionCallOutput" => &["output"],
+        _ => return None,
+    };
+    result_keys
+        .iter()
+        .find_map(|key| item.get(*key).and_then(gcms_unlock_from_tool_payload))
+}
+
 fn codex_gcms_unlock_request(ev: &serde_json::Value) -> Option<GcmsUnlockRequest> {
     if ev.get("type").and_then(|value| value.as_str()) != Some("item.completed") {
         return None;
@@ -4356,6 +4379,102 @@ mod tests {
             "page_id": 42,
             "admin_path": "/admin/pages/42/project"
         })
+    }
+
+    #[test]
+    fn codex_app_unlock_notification_reaches_ui_without_persisting_challenge() {
+        let events = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let captured = events.clone();
+        let channel = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(raw) = body {
+                captured.lock().unwrap().push(serde_json::from_str(&raw).unwrap());
+            }
+            Ok(())
+        });
+        let collect = Arc::new(Mutex::new(Collect {
+            text: String::new(), tools: Vec::new(), session_ref: "thread-test".into(),
+            is_error: false, usage: None, raw_tail: String::new(), images: Vec::new(),
+        }));
+        let (done_tx, _done_rx) = oneshot::channel();
+        let sink = CodexTurnSink {
+            channel, collect: collect.clone(),
+            completed: Arc::new(Mutex::new(Some(done_tx))),
+            streamed_messages: Arc::new(Mutex::new(HashSet::new())),
+        };
+        let payload = unlock_payload("pages.publish");
+        let params = json!({
+            "threadId": "thread-test", "turnId": "turn-test",
+            "item": {
+                "id": "command-test", "type": "commandExecution", "status": "failed",
+                "command": "node scripts/gcms.js page-publish",
+                "aggregatedOutput": payload.to_string(), "exitCode": 1
+            }
+        });
+        handle_codex_app_notification("item/started", &params, &sink);
+        handle_codex_app_notification("item/completed", &params, &sink);
+        let events = events.lock().unwrap();
+        let unlocks: Vec<_> = events.iter()
+            .filter(|event| event["type"] == "gcms_unlock_required").collect();
+        assert_eq!(unlocks.len(), 1, "completed tool output must reach the native unlock UI");
+        assert_eq!(unlocks[0]["operation"], "pages.publish");
+        assert_eq!(unlocks[0]["admin_path"], payload["admin_path"]);
+        assert_eq!(unlocks[0]["unlock_challenge"], payload["unlock_challenge"]);
+        let challenge = payload["unlock_challenge"].as_str().unwrap();
+        let collect = collect.lock().unwrap();
+        assert!(!collect.text.contains(challenge));
+        assert!(!collect.raw_tail.contains(challenge));
+        assert!(collect.tools.iter().all(|tool| !tool.detail.contains(challenge)));
+    }
+
+    #[test]
+    fn codex_app_unlock_supports_completed_tool_output_formats() {
+        for operation in ["pages.publish", "pages.rollback", "page_capabilities.grant"] {
+            let payload = unlock_payload(operation);
+            let items = [
+                json!({"type":"commandExecution", "aggregatedOutput":format!("HTTP 409\n{payload}")}),
+                json!({"type":"mcpToolCall", "result":{"content":[{"type":"text","text":payload.to_string()}]}}),
+                json!({"type":"dynamicToolCall", "contentItems":[{"type":"inputText","text":payload.to_string()}]}),
+                json!({"type":"functionCallOutput", "output":payload.to_string()}),
+            ];
+            for item in items {
+                let params = json!({"threadId":"thread-1","turnId":"turn-1","item":item});
+                let request = codex_app_gcms_unlock_request("item/completed", &params)
+                    .expect("completed app-server tool output must request native confirmation");
+                assert_eq!(request.operation, operation);
+                assert_eq!(request.admin_path, "/admin/pages/42/project");
+                for method in ["item/started", "item/commandExecution/outputDelta", "turn/completed", "item.completed"] {
+                    assert!(codex_app_gcms_unlock_request(method, &params).is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn codex_app_unlock_ignores_inputs_prose_and_invalid_targets() {
+        let payload = unlock_payload("pages.publish");
+        for item in [
+            json!({"type":"agentMessage","text":payload.to_string()}),
+            json!({"type":"userMessage","content":[{"type":"text","text":payload.to_string()}]}),
+            json!({"type":"reasoning","summary":[payload.to_string()]}),
+            json!({"type":"commandExecution","command":payload.to_string()}),
+            json!({"type":"mcpToolCall","arguments":payload,"result":{"content":[]}}),
+            json!({"type":"dynamicToolCall","arguments":payload,"contentItems":[]}),
+        ] {
+            assert!(codex_app_gcms_unlock_request("item/completed", &json!({"item":item})).is_none());
+        }
+        for (field, value) in [
+            ("unlock_required", json!(false)),
+            ("unlock_challenge", json!("invalid")),
+            ("admin_path", json!("/admin/pages/43/project")),
+            ("operation", json!("posts.publish")),
+        ] {
+            let mut invalid = payload.clone();
+            invalid[field] = value;
+            let params = json!({"item":{"type":"commandExecution","aggregatedOutput":invalid.to_string()}});
+            assert!(codex_app_gcms_unlock_request("item/completed", &params).is_none());
+        }
+        let missing_output = json!({"item":{"type":"commandExecution"}});
+        assert!(codex_app_gcms_unlock_request("item/completed", &missing_output).is_none());
     }
 
     #[test]
