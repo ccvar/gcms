@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import ConversationCanvas from '$lib/ConversationCanvas.svelte';
+  import { pane, leaves, splitPane, removePane, replacePane, dropEdge, outerDropEdge, type Layout, type Edge } from '$lib/conversationLayout';
+  import { onDestroy, tick, untrack } from 'svelte';
   import { invoke, Channel } from '@tauri-apps/api/core';
   // xterm 自带样式：必须从 JS 侧引入。写进组件样式块的 @import 会被 Svelte 作用域化，
   // 而 xterm 的 DOM 是运行时建的、静态分析看不到 → 26 条 unused selector 警告。
@@ -4468,6 +4470,279 @@
   let convos = $state<Conversation[]>([]);
   let activeConvId = $state('');
   let activeConv = $state<Conversation | null>(null);
+  // Layout stores only conversation references. Execution and drafts remain keyed by conversation,
+  // so moving/closing a pane never cancels a turn or redirects an in-flight operation.
+  let conversationLayout = $state<Layout | null>(null);
+  let splitFocused = $state('');
+  type PaneDraft = {text:string;files:Attach[];scroll:number;sticky:boolean};
+  let splitDragId = $state('');
+  let splitDragPoint = $state<{x:number;y:number}|null>(null);
+  let singleDropEdge = $state<Edge | null>(null);
+  let splitPointerPreview = $state<{id:string;edge:Edge}|null>(null);
+  let cancelConversationPointerDrag:()=>void=()=>{};
+  onDestroy(()=>cancelConversationPointerDrag());
+  let splitSnapshots = $state<Record<string, Conversation>>({});
+  let splitDrafts = $state<Record<string, PaneDraft>>({});
+  let splitErrors = $state<Record<string, string>>({});
+  let splitQueued = $state<Record<string, {text:string;files:Attach[];startedAt:number}>>({});
+  const splitVisible = $derived.by(()=>!!conversationLayout && view === 'thread'
+    && leaves(conversationLayout).some(p=>p.conversation===activeConvId));
+  function splitConversation(id:string):Conversation | null { return splitSnapshots[id] ?? convos.find(c=>c.id===id) ?? null; }
+  const paneInputs = new Map<string,HTMLTextAreaElement>();
+  const paneScrollers = new Map<string,HTMLDivElement>();
+  let paneSites = $state<Record<string,Site[]>>({});
+  let paneCfReady = $state<Record<string,boolean>>({});
+  let paneUploading = $state<Record<string,number>>({});
+  const paneMetadataLoading = new Set<string>();
+  function conversationConnection(c:Conversation|null) {
+    return c && c.task_type!=='workspace' && c.task_type!=='skill' ? conns.find(x=>x.id===c.conn_id)??null : null;
+  }
+  function conversationSites(c:Conversation|null) {
+    return c?.conn_id===activeConnId ? sites : paneSites[c?.conn_id??'']??[];
+  }
+  function conversationPresentation(c:Conversation|null) {
+    const conn=conversationConnection(c);
+    const list=conversationSites(c);
+    const site=conn?.kind==='gcms' && c && c.task_type!=='free' && !isMultiSiteConversation(c)
+      ? c.task_type==='sitebuild' ? sitebuildHasCreationSignal(c) ? resolveSitebuildSite(c,list) : null
+        : list.find(s=>s.slug.toLowerCase()===c.site_slug.trim().toLowerCase())??null : null;
+    return {conn,site,url:conn?.kind==='cloudflare'&&c ? detectSiteUrl([c]) : site?sitePublicURL(site,conn):'',
+      skill:c?.task_type==='skill'?installedSkills.find(s=>s.id===(c.skill_ids?.[0]||c.site_slug))??null:null};
+  }
+  async function loadPaneMetadata(c:Conversation) {
+    const conn=conversationConnection(c);
+    const key=conn?.kind==='cloudflare'?c.id:c.conn_id;
+    if(!conn || paneMetadataLoading.has(key))return;
+    paneMetadataLoading.add(key);
+    try {
+      if(conn.kind==='gcms' && c.conn_id!==activeConnId && !paneSites[c.conn_id]) {
+        const result=await invoke<Discovery>('discover_sites',{connId:c.conn_id,refreshStats:false});
+        paneSites[c.conn_id]=result.items;
+      }else if(conn.kind==='cloudflare')paneCfReady[c.id]=await invoke<boolean>('cf_project_ready',{connId:c.conn_id,project:c.site_slug});
+    }catch{/* Metadata failure must not prevent opening a conversation. */}
+    finally{paneMetadataLoading.delete(key);}
+  }
+  function setPaneText(id:string,text:string) {
+    if(splitDrafts[id])splitDrafts[id].text=text;
+    if(activeConvId===id)draft=text;
+    const input=paneInputs.get(id) as (HTMLTextAreaElement & {__autogrow?:()=>void})|undefined;
+    void tick().then(()=>input?.__autogrow?.());
+  }
+  function paneScroll(node:HTMLDivElement, id:string) {
+    if(!id){threadEl=node;threadInnerEl=node.firstElementChild as HTMLDivElement;return;}
+    paneScrollers.set(id,node);
+    const state=splitDrafts[id];
+    const restore=()=>{node.scrollTop=state.sticky?node.scrollHeight:state.scroll;};
+    const scroll=()=>{state.scroll=node.scrollTop;state.sticky=node.scrollHeight-node.scrollTop-node.clientHeight<100;};
+    const observer=new ResizeObserver(()=>{if(state.sticky)node.scrollTop=node.scrollHeight;});
+    if(node.firstElementChild)observer.observe(node.firstElementChild);
+    const frame=requestAnimationFrame(restore);node.addEventListener('scroll',scroll);
+    return {destroy(){cancelAnimationFrame(frame);observer.disconnect();node.removeEventListener('scroll',scroll);paneScrollers.delete(id);}};
+  }
+  function paneInput(node:HTMLTextAreaElement, id:string) {
+    if(id)paneInputs.set(id,node);
+    if(!id||activeConvId===id)draftEl=node;
+    const resize=autogrow(node);
+    return {destroy(){resize.destroy();if(id)paneInputs.delete(id);}};
+  }
+  async function uploadPaneFiles(id:string,files:FileList|null) {
+    const c=splitConversation(id);if(!c||!files)return;
+    for(const file of Array.from(files))try{await splitUpload(c,file);}catch(e){splitErrors[id]=String(e);}
+  }
+  function panePrefill(id:string, action:()=>void) {
+    const leaf=leaves(conversationLayout).find(p=>p.conversation===id);
+    if(leaf)focusSplit(leaf.id);
+    action();setPaneText(id,draft);paneInputs.get(id)?.focus();
+  }
+  function rememberSplit(c:Conversation) {
+    splitSnapshots[c.id]=c;
+    splitDrafts[c.id] ??= {text:'',files:[],scroll:0,sticky:true};
+    if(activeConvId===c.id) {activeConv=c;threadModel=c.model;threadPerm=c.perm_mode||'full';threadEffort=c.effort||'';}
+  }
+  function focusSplit(id:string) {
+    const leaf=leaves(conversationLayout).find(p=>p.id===id);
+    const c=leaf && splitConversation(leaf.conversation);
+    if(!c)return;
+    if(splitFocused===id && activeConvId===c.id)return;
+    splitFocused=id;
+    activeConvId=c.id; activeConv=c;threadModel=c.model;threadPerm=c.perm_mode||'full';threadEffort=c.effort||'';
+    draft=splitDrafts[c.id]?.text??'';
+    draftEl=paneInputs.get(c.id);
+    // Connection discovery is not switched here: all pane actions carry their own target.
+  }
+  function ensureConversationPane() {
+    if(!activeConv)return;
+    rememberSplit(activeConv);
+    splitDrafts[activeConv.id]={text:draft,files:attachments,scroll:threadEl?.scrollTop??0,sticky:threadStickBottom};
+    if(queued?.convId===activeConv.id) {
+      splitQueued[activeConv.id]={text:queued.text,files:queued.atts,startedAt:queued.turnStartedAt}; queued=null;
+    }
+    attachments=[];
+    if(!conversationLayout)conversationLayout=pane(activeConvId);
+    else if(!leaves(conversationLayout).some(p=>p.conversation===activeConvId)) {
+      const target=leaves(conversationLayout).find(p=>p.id===splitFocused)??leaves(conversationLayout)[0];
+      conversationLayout=replacePane(conversationLayout,target.id,activeConvId);
+    }
+    splitFocused=leaves(conversationLayout).find(p=>p.conversation===activeConvId)!.id;
+    view='thread';
+    void loadPaneMetadata(activeConv);
+  }
+  function closeSplit(id:string) {
+    if(!conversationLayout)return;
+    const remaining=removePane(conversationLayout,id);
+    if(!remaining) return; // The last pane is the ordinary conversation, not a separate mode.
+    conversationLayout=remaining;
+    if(splitFocused===id)focusSplit(leaves(remaining)[0].id);
+  }
+  function startConversationDrag(e:DragEvent,id:string) {
+    if((e.target as HTMLElement).closest('button')){e.preventDefault();return;}
+    splitDragId=id;
+    e.dataTransfer?.setData('application/x-pilot-conversation',id);
+    if(e.dataTransfer)e.dataTransfer.effectAllowed='move';
+  }
+  function endConversationDrag() {splitDragId='';splitDragPoint=null;singleDropEdge=null;splitPointerPreview=null;}
+  function startConversationPointerDrag(e:PointerEvent,id:string) {
+    if(e.button!==0||e.isPrimary===false||(e.target as HTMLElement).closest('button,input,textarea'))return;
+    cancelConversationPointerDrag();
+    // Pointer-driven dragging is consistent in WebView2 and WKWebView; native HTML drag
+    // remains a fallback. Do not start a move until the user crosses the drag threshold.
+    e.preventDefault();
+    const startX=e.clientX,startY=e.clientY;
+    let moved=false;
+    const move=(event:PointerEvent)=>{
+      if(!moved&&Math.hypot(event.clientX-startX,event.clientY-startY)<6)return;
+      moved=true;splitDragId=id;singleDropEdge=null;splitPointerPreview=null;
+      splitDragPoint={x:event.clientX,y:event.clientY};
+      const element=document.elementFromPoint(event.clientX,event.clientY);
+      const target=element?.closest<HTMLElement>('[data-pilot-pane]');
+      if(splitVisible&&target){
+        const r=target.getBoundingClientRect(),canvas=target.closest('[data-pilot-canvas]')?.getBoundingClientRect();
+        const outer=canvas?outerDropEdge(event.clientX-canvas.left,event.clientY-canvas.top,canvas.width,canvas.height):null;
+        splitPointerPreview=outer&&conversationLayout?.kind==='split'
+          ?{id:conversationLayout.id,edge:outer}
+          :{id:target.dataset.pilotPane!,edge:dropEdge(event.clientX-r.left,event.clientY-r.top,r.width,r.height)};
+        if(splitPointerPreview.id===leaves(conversationLayout).find(p=>p.conversation===id)?.id)splitPointerPreview=null;
+      }
+      else if(!splitVisible&&activeConv&&(view==='thread'||view==='remote')) {
+        const area=element?.closest<HTMLElement>('[data-pilot-workarea]');
+        if(area){const r=area.getBoundingClientRect();singleDropEdge=dropEdge(event.clientX-r.left,event.clientY-r.top,r.width,r.height);}
+      }
+    };
+    const cleanup=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',cancel);document.removeEventListener('keydown',key);window.removeEventListener('blur',cancel);cancelConversationPointerDrag=()=>{};};
+    const cancel=()=>{cleanup();endConversationDrag();};
+    const key=(event:KeyboardEvent)=>{if(event.key==='Escape')cancel();};
+    const up=()=>{
+      const dest=splitPointerPreview,edge=singleDropEdge;
+      cleanup();endConversationDrag();
+      if(!moved)return;
+      // A drag must not also run the sidebar's ordinary click-to-replace action.
+      const block=(event:MouseEvent)=>{event.preventDefault();event.stopImmediatePropagation();};
+      document.addEventListener('click',block,{capture:true,once:true});
+      setTimeout(()=>document.removeEventListener('click',block,true),0);
+      if(dest)void addSplit(id,dest.edge,dest.id);else if(edge)void addSplit(id,edge);
+    };
+    cancelConversationPointerDrag=cancel;
+    document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',cancel);document.addEventListener('keydown',key);window.addEventListener('blur',cancel);
+  }
+  async function addSplit(id:string,edge:Edge,target?:string) {
+    if(!convos.some(c=>c.id===id)&&!splitSnapshots[id])return;
+    const existing=splitConversation(id);
+    try {
+      const c=running[id]&&existing ? existing : await invoke<Conversation|null>('get_conversation',{id});
+      if(!c)return;
+      if(!splitVisible)ensureConversationPane();
+      if(!conversationLayout)return;
+      const leaf=target??splitFocused;
+      if(leaf!==conversationLayout.id&&!leaves(conversationLayout).some(p=>p.id===leaf))return;
+      rememberSplit(c);
+      void loadPaneMetadata(c);
+      conversationLayout=splitPane(conversationLayout,leaf,id,edge);
+      focusSplit(leaves(conversationLayout).find(p=>p.conversation===id)!.id);
+    } catch(e) {say(String(e),'err');}
+    finally {endConversationDrag();}
+  }
+  function singleConversationDragOver(e:DragEvent) {
+    if(!splitDragId||splitVisible||!activeConv||(view!=='thread'&&view!=='remote'))return;
+    e.preventDefault();
+    const r=(e.currentTarget as HTMLElement).getBoundingClientRect();
+    singleDropEdge=dropEdge(e.clientX-r.left,e.clientY-r.top,r.width,r.height);
+  }
+  async function splitUpload(c:Conversation,file:File) {
+    if(file.size>25*1024*1024)throw new Error('文件太大（上限 25MB）');
+    paneUploading[c.id]=(paneUploading[c.id]??0)+1;
+    try {
+      const path=await invoke<string>('save_attachment',{connId:c.conn_id,project:conversationProject(c),filename:attachmentFilename(file),data:Array.from(new Uint8Array(await file.arrayBuffer()))});
+      let preview='';
+      if(file.type?.startsWith('image/'))preview=await new Promise<string>(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>resolve('');reader.readAsDataURL(file);});
+      const state=splitDrafts[c.id];
+      if(state)state.files=[...state.files,{name:file.name||path.split('/').pop()||'附件',path,preview}];
+    }finally{paneUploading[c.id]--;}
+  }
+  function restoreSplitQueue(id:string) {
+    const q=splitQueued[id], state=splitDrafts[id];
+    if(!q||!state)return;
+    setPaneText(id,[q.text,state.text].filter(Boolean).join('\n\n'));state.files=[...q.files,...state.files];delete splitQueued[id];
+  }
+  async function splitSubmit(id:string) {
+    const c=splitConversation(id), state=splitDrafts[id];
+    if(!c||!state||(!state.text.trim()&&!state.files.length)||paneUploading[id]||(splitQueued[id]&&!running[id]))return;
+    if(running[id]) {
+      const prior=splitQueued[id];
+      splitQueued[id]={text:[prior?.text,state.text].filter(Boolean).join('\n'),files:[...(prior?.files??[]),...state.files],startedAt:lives[id]?.startedAt??0};setPaneText(id,'');state.files=[];return;
+    }
+    const text=state.text.trim()+(state.files.length ? (state.text.trim()?'\n\n':'')+ATT_MARKER+'\n'+state.files.map(f=>`- ${f.path}`).join('\n'):'');
+    setPaneText(id,'');state.files=[];state.sticky=true;delete splitErrors[id];delete autoRetried[id];delete retryExhausted[id];
+    beginTurn(id,{...c,messages:[...c.messages,optimisticUser(text)],status:'running'});
+    try {
+      const result=await invoke<Conversation>('send_message',{convId:id,message:text,onEvent:makeChannel(id)});
+      const failed=lives[id]?.failed??false, err=lives[id]?.error??'';
+      await refreshConvos();endTurn(result,id);maybeAutoRetry(id,failed,err);
+    }catch(e){splitErrors[id]=String(e);await failTurn(e,id);}
+  }
+  async function splitStop(id:string) {
+    restoreSplitQueue(id);
+    if(running[id])try{await invoke('cancel_turn',{convId:id});}catch(e){splitErrors[id]=String(e);}
+  }
+  function finishSplitQueue(id:string, c:Conversation|null, failed:boolean, startedAt:number) {
+    const q=splitQueued[id], state=splitDrafts[id];
+    if(!q||!state)return;
+    const last=[...(c?.messages??[])].reverse().find(m=>m.role==='user')?.text.trim();
+    const payload=q.text.trim()+(q.files.length?(q.text.trim()?'\n\n':'')+ATT_MARKER+'\n'+q.files.map(f=>`- ${f.path}`).join('\n'):'');
+    if(failed||!c||!startedAt||q.startedAt!==startedAt||payload===last){restoreSplitQueue(id);return;}
+    delete splitQueued[id];
+    const newer={text:state.text,files:state.files};
+    state.text=q.text;state.files=q.files;
+    void splitSubmit(id); // captures this conversation synchronously, before the first await
+    setPaneText(id,newer.text);state.files=newer.files;
+  }
+  function openSplitAdmin(c:Conversation,path='/admin/sites') {
+    const conn=conns.find(x=>x.id===c.conn_id);
+    if(!conn)return;
+    try {const url=new URL(conn.api_base);void openUrl(new URL(path,url.origin).href);}catch{say('当前连接没有可用的 GCMS 后台地址','err');}
+  }
+  function splitModelOptions(c:Conversation) { return conversationModelOptions(c); }
+  async function splitSetting(c:Conversation,kind:'model'|'effort'|'fast'|'perm',value:string|boolean) {
+    const id=c.id;
+    try {
+      let result:Conversation|null=null;
+      if(kind==='model') {
+        if(running[id])return;
+        const [brain,...parts]=String(value).split('::'),model=parts.join('::');
+        if(!ALL_BRAINS.includes(brain as Brain)||(!brainUsable(brain as Brain)&&brain!==c.brain))return;
+        if(brain!==c.brain) {
+          const warning=isCodexSsh(brain,conns.some(x=>x.id===c.conn_id&&x.kind==='ssh'))?`\n\n${CODEX_SSH_NOTE}`:'';
+          if(!await confirmDialog(`切换后将以历史摘要重建对话，自动重跑最近一条请求。${warning}`,{title:`切换到 ${brainLabel(brain)}`,kind:'warning'}))return;
+          if(running[id])return;
+          result=await invoke('set_conversation_brain_model',{convId:id,brain,model});
+          if(result){rememberSplit(result);convos=convos.map(x=>x.id===id?result!:x);void rebuildSession(id);}return;
+        }
+        result=await invoke('set_conversation_model',{convId:id,model});
+      }else if(kind==='effort')result=await invoke('set_conversation_effort',{convId:id,effort:value});
+      else if(kind==='fast')result=await invoke('set_conversation_fast',{convId:id,fast:value});
+      else result=await invoke('set_conversation_perm_mode',{convId:id,permMode:value});
+      if(result){rememberSplit(result);convos=convos.map(x=>x.id===id?result!:x);}
+    }catch(e){splitErrors[id]=String(e);}
+  }
   // 会话可切换模型；threadModel 跟随活动会话、改动即持久化。
   let threadModel = $state('');
   async function persistThreadModel(m: string) {
@@ -4482,24 +4757,25 @@
   }
   // 会话内模型面板：三家厂商的模型都列出（值编码 "<brain>::<model>"，同启动器 comboOpts；行首图标区分）。
   // 当前厂商永远可选（保持原行为）；其他厂商未就绪（未装/未登录）整组置灰。当前厂商排前面。
-  const threadComboOpts = $derived.by(() => {
-    const cur = (activeConv?.brain ?? 'claude') as Brain;
+  function conversationModelOptions(c:Conversation|null) {
+    const cur = (c?.brain ?? 'claude') as Brain;
     const order: Brain[] = [cur, ...ALL_BRAINS.filter((b) => b !== cur)];
     const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
     for (const b of order) {
       // 当前厂商永远可选（会话已经在用它了，灰掉只会让触发器显示成一个选不中的项）。
       // 远程连接下的 codex 不置灰、只挂注记：它能用，只是那道闸是打折的（完整说法见 permTipFor）。
       const usable = b === cur || brainUsable(b);
-      const note = isCodexSsh(b, activeConvIsSsh) ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      const note = isCodexSsh(b, conversationConnection(c)?.kind==='ssh') ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
       for (const m of launcherModelOpts(b)) {
         out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
       }
     }
     // 会话当前模型不在清单里（比如自定义 ID 事后被删）：补一条，触发器别显示成裸编码值。
-    const curVal = `${cur}::${threadModel}`;
-    if (!out.some((o) => o.value === curVal)) out.unshift({ value: curVal, label: threadModel || '模型', sub: '当前会话', icon: cur });
+    const curVal = `${cur}::${c?.model}`;
+    if (!out.some((o) => o.value === curVal)) out.unshift({ value: curVal, label: c?.model || '模型', sub: '当前会话', icon: cur });
     return out;
-  });
+  }
+  const threadComboOpts = $derived(conversationModelOptions(activeConv));
   // 会话内选模型：同厂商＝只改存储、下一轮生效（原行为不变）；跨厂商＝底层 session 换不了家，
   // 确认后更新会话 brain/model（后端顺带清 session_ref；非 ssh 的 codex 下 ask/auto 落 full，
   // ssh 下**保持原档**——桥那道卡是 codex 仅剩的闸，见 lib.rs::apply_brain_switch），
@@ -5544,8 +5820,7 @@
   }
   function openNewTask() { pendingProposalKey = ''; tf = freshTaskForm(); taskModalOpen = true; }
   // AI 在对话里提议的定时任务 → 用当前会话的站点/模型预填，弹确认卡让用户确认/微调。
-  function openTaskFromProposal(p: TaskProposal) {
-    const c = activeConv;
+  function openTaskFromProposal(p: TaskProposal, c:Conversation|null=activeConv) {
     if (!c) return;
     pendingProposalKey = proposalKey(p);
     const firstRunSecs = p.first_run && !isNaN(new Date(p.first_run).getTime()) ? Math.floor(new Date(p.first_run).getTime() / 1000) : 0;
@@ -5718,8 +5993,13 @@
   let cfReady = $state(false); // 项目是否已建出可预览/部署的内容（否则预览/部署置灰）
   async function checkCfReady() {
     if (!activeConvIsCf || !activeConv) { cfReady = false; return; }
-    try { cfReady = await invoke<boolean>('cf_project_ready', { connId: activeConv.conn_id, project: activeConv.site_slug }); }
-    catch { cfReady = false; }
+    const c=activeConv;
+    try {
+      const ready=await invoke<boolean>('cf_project_ready', { connId:c.conn_id, project:c.site_slug });
+      paneCfReady[c.id]=ready;
+      if(activeConvId===c.id)cfReady=ready;
+    }
+    catch { paneCfReady[c.id]=false;if(activeConvId===c.id)cfReady=false; }
   }
   /** 从预览 URL 里取 ":端口" 给提示用（端口是后端挑的，不再恒等于 8788）。 */
   function portOf(url: string): string {
@@ -6251,6 +6531,22 @@
 
   // ---------- composer / live turn ----------
   let draft = $state('');
+  function legacyComposer(){return {text:draft,files:attachments,queued,cfReady};}
+  function setLegacyDraft(text:string){draft=text;}
+  // A conversation always occupies a leaf; splitting changes only its geometry.
+  $effect(() => {
+    const c=activeConv, currentView=view;
+    if(!c || currentView!=='thread')return;
+    untrack(() => {
+      if(!conversationLayout || !leaves(conversationLayout).some(p=>p.conversation===c.id))ensureConversationPane();
+      else splitSnapshots[c.id]=c;
+    });
+  });
+  // Existing actions which prefill the active composer (deploy/readiness/etc.) use draft.
+  $effect(() => {
+    const text=draft, id=activeConvId;
+    untrack(() => {if(splitVisible && splitDrafts[id])splitDrafts[id].text=text;});
+  });
   type ExecutionActivity = {
     id: string;
     label: string;
@@ -6298,7 +6594,7 @@
   // 加载中的"耗时"计时：仅在当前对话跑着时开一个轻量心跳刷新 nowMs，停了自动清掉。
   let nowMs = $state(0);
   $effect(() => {
-    if (!viewBusy) return;
+    if (!viewBusy && !(splitVisible && Object.keys(running).length)) return;
     nowMs = Date.now();
     const t = setInterval(() => { nowMs = Date.now(); }, 500);
     return () => clearInterval(t);
@@ -6956,11 +7252,15 @@
   let siteReadinessOpenFor = $state('');
   let sitebuildSyncingByConv = $state<Record<string, boolean>>({});
   let sitebuildSyncFailedByConv = $state<Record<string, boolean>>({});
-  const activeSiteReadinessContext = $derived.by(() => {
+  function conversationReadiness(activeConv:Conversation|null) {
+    const activeConvId=activeConv?.id??'';
+    const activeConvConn=conversationConnection(activeConv);
+    const sites=conversationSites(activeConv);
+  const activeSiteReadinessContext = (() => {
     const c = activeConv;
     return !!c && activeConvConn?.kind === 'gcms' && c.task_type === 'sitebuild' && !isMultiSiteConversation(c);
-  });
-  const activeReadinessSite = $derived.by(() => {
+  })();
+  const activeReadinessSite = (() => {
     const c = activeConv;
     if (!activeSiteReadinessContext || !c || !sitebuildHasCreationSignal(c)) return null;
     const site = resolveSitebuildSite(c, sites);
@@ -6968,10 +7268,10 @@
     return site && baseline?.has(sitebuildSiteIdentity(site)) && !sitebuildReportsCreateSuccess(c)
       ? null
       : site;
-  });
-  const activeSiteReadinessWaitingForSite = $derived(activeSiteReadinessContext && !activeReadinessSite);
-  const activeSiteReadinessOpen = $derived(!!activeConvId && siteReadinessOpenFor === activeConvId);
-  const activeSiteReadinessItems = $derived.by((): SiteReadinessItem[] => {
+  })();
+  const activeSiteReadinessWaitingForSite = (activeSiteReadinessContext && !activeReadinessSite);
+  const activeSiteReadinessOpen = (!!activeConvId && siteReadinessOpenFor === activeConvId);
+  const activeSiteReadinessItems = ((): SiteReadinessItem[] => {
     const site = activeReadinessSite;
     if (!site) return [{
       id: 'identify',
@@ -7037,16 +7337,16 @@
         prompt: '检查当前站点的草稿与发布状态，列出适合首批发布的内容及发布前问题；不要直接发布。',
       },
     ];
-  });
-  const activeSiteReadinessPending = $derived(activeSiteReadinessItems.filter((item) => item.tone !== 'done'));
+  })();
+  const activeSiteReadinessPending = (activeSiteReadinessItems.filter((item) => item.tone !== 'done'));
   // 全部完成后不再长期占用对话区；只有存在待办、异常或尚未关联站点时显示。
-  const activeSiteReadinessVisible = $derived(activeSiteReadinessContext
+  const activeSiteReadinessVisible = (activeSiteReadinessContext
     && activeSiteReadinessPending.length > 0);
-  const activeSiteReadinessDoneCount = $derived(activeSiteReadinessItems.length - activeSiteReadinessPending.length);
-  const activeSiteReadinessBlockers = $derived(activeSiteReadinessItems.filter((item) => item.tone === 'blocker').length);
-  const activeSiteReadinessTodos = $derived(activeSiteReadinessItems.filter((item) => item.tone === 'todo').length);
-  const activeSiteReadinessChecks = $derived(activeSiteReadinessItems.filter((item) => item.tone === 'check').length);
-  const activeSiteReadinessSummary = $derived.by(() => {
+  const activeSiteReadinessDoneCount = (activeSiteReadinessItems.length - activeSiteReadinessPending.length);
+  const activeSiteReadinessBlockers = (activeSiteReadinessItems.filter((item) => item.tone === 'blocker').length);
+  const activeSiteReadinessTodos = (activeSiteReadinessItems.filter((item) => item.tone === 'todo').length);
+  const activeSiteReadinessChecks = (activeSiteReadinessItems.filter((item) => item.tone === 'check').length);
+  const activeSiteReadinessSummary = (() => {
     if (!activeSiteReadinessItems.length) return '';
     if (activeSiteReadinessWaitingForSite) return '1 项待处理';
     if (!activeSiteReadinessPending.length) return '已完成上线准备';
@@ -7055,12 +7355,29 @@
     if (activeSiteReadinessTodos) parts.push(`${activeSiteReadinessTodos} 项建议完善`);
     if (activeSiteReadinessChecks) parts.push(`${activeSiteReadinessChecks} 项待检查`);
     return parts.join(' · ');
-  });
-  const activeSiteReadinessDetail = $derived(activeSiteReadinessWaitingForSite
+  })();
+  const activeSiteReadinessDetail = (activeSiteReadinessWaitingForSite
     ? '暂未识别到新站，创建完成后会自动同步'
     : activeSiteReadinessPending.length
       ? `还差：${activeSiteReadinessPending.slice(0, 3).map((item) => item.label).join('、')}${activeSiteReadinessPending.length > 3 ? '…' : ''}`
       : '站点信息、访问域名、品牌素材与首批内容均已就绪');
+
+    return {activeSiteReadinessContext,activeReadinessSite,activeSiteReadinessWaitingForSite,activeSiteReadinessOpen,activeSiteReadinessItems,activeSiteReadinessPending,activeSiteReadinessVisible,activeSiteReadinessDoneCount,activeSiteReadinessBlockers,activeSiteReadinessTodos,activeSiteReadinessChecks,activeSiteReadinessSummary,activeSiteReadinessDetail};
+  }
+  const currentReadiness = $derived(conversationReadiness(activeConv));
+  const activeSiteReadinessContext = $derived(currentReadiness.activeSiteReadinessContext);
+  const activeReadinessSite = $derived(currentReadiness.activeReadinessSite);
+  const activeSiteReadinessWaitingForSite = $derived(currentReadiness.activeSiteReadinessWaitingForSite);
+  const activeSiteReadinessOpen = $derived(currentReadiness.activeSiteReadinessOpen);
+  const activeSiteReadinessItems = $derived(currentReadiness.activeSiteReadinessItems);
+  const activeSiteReadinessPending = $derived(currentReadiness.activeSiteReadinessPending);
+  const activeSiteReadinessVisible = $derived(currentReadiness.activeSiteReadinessVisible);
+  const activeSiteReadinessDoneCount = $derived(currentReadiness.activeSiteReadinessDoneCount);
+  const activeSiteReadinessBlockers = $derived(currentReadiness.activeSiteReadinessBlockers);
+  const activeSiteReadinessTodos = $derived(currentReadiness.activeSiteReadinessTodos);
+  const activeSiteReadinessChecks = $derived(currentReadiness.activeSiteReadinessChecks);
+  const activeSiteReadinessSummary = $derived(currentReadiness.activeSiteReadinessSummary);
+  const activeSiteReadinessDetail = $derived(currentReadiness.activeSiteReadinessDetail);
   let gcmsPublicAccessOpeningFor = $state('');
   let gcmsUnlockPromptedKeys = $state<Set<string>>(new Set());
   type GcmsControlUnlockOperation =
@@ -7280,6 +7597,11 @@
     if (activeReadinessSite) return activeGcmsPublicAccessPending;
     return /外部(?:访问)?尚未上线|DNS\s*[：:]\s*无|HTTP\s*[：:]\s*502|HTTPS\s*[：:]\s*(?:无法|未建立|失败)|原生界面.*(?:上线|部署)/i.test(text);
   });
+  function conversationExternalAccessPending(c:Conversation|null, readiness:ReturnType<typeof conversationReadiness>) {
+    if(!c || conversationConnection(c)?.kind!=='gcms')return false;
+    if(readiness.activeReadinessSite)return readiness.activeSiteReadinessItems.some(item=>item.id==='access'&&item.tone==='blocker');
+    return /外部(?:访问)?尚未上线|DNS\s*[：:]\s*无|HTTP\s*[：:]\s*502|HTTPS\s*[：:]\s*(?:无法|未建立|失败)|原生界面.*(?:上线|部署)/i.test(sitebuildConversationText(c));
+  }
   async function openGcmsPublicAccessEditor() {
     const conversation = activeConv;
     const gcmsConnection = activeConvConn;
@@ -7324,9 +7646,8 @@
       if (gcmsPublicAccessOpeningFor === openKey) gcmsPublicAccessOpeningFor = '';
     }
   }
-  function openGcmsControlUnlock(action: GcmsControlUnlockAction) {
-    const c = activeConv;
-    const conn = activeConvConn;
+  function openGcmsControlUnlock(action: GcmsControlUnlockAction, c:Conversation|null=activeConv) {
+    const conn = conns.find(x=>x.id===c?.conn_id);
     if (!c || !conn || conn.kind !== 'gcms') return;
     requestGcmsPassword({
       title: action.title,
@@ -10436,6 +10757,7 @@
   // ---------- 对话导航 ----------
   function newChat() {
     activeConvId = ''; activeConv = null; lDraft = '';
+    draft='';attachments=[];
     // 远程连接没有启动页：新对话＝把底部对话面板腾空（工作台留在原地，终端不断）。
     // 它不换「页面」，所以必须给点看得见的反馈：把面板打开并把光标放进输入框。
     viewAfterConvGone();
@@ -10449,6 +10771,15 @@
   async function openConv(id: string) {
     const c = await invoke<Conversation | null>('get_conversation', { id });
     if (!c) { await refreshConvos(); return; }
+    if (conversationLayout) {
+      rememberSplit(running[id] ? splitConversation(id) ?? c : c);
+      void loadPaneMetadata(c);
+      const existing=leaves(conversationLayout).find(p=>p.conversation===id);
+      if(existing)focusSplit(existing.id);
+      else {conversationLayout=replacePane(conversationLayout,splitFocused,id);focusSplit(splitFocused);}
+      view='thread';
+      return;
+    }
     if (c.task_type === 'skill') {
       activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; threadEffort = c.effort || '';
       view = 'thread';
@@ -11213,6 +11544,9 @@
     try {
       await invoke('delete_conversation', { id });
       clearStructuredGcmsUnlock(id);
+      const leaf=leaves(conversationLayout).find(p=>p.conversation===id);
+      if(leaf)closeSplit(leaf.id);
+      delete splitSnapshots[id];delete splitDrafts[id];delete splitQueued[id];delete splitErrors[id];
       if (activeConvId === id) { const wasSkill = c?.task_type === 'skill'; activeConvId = ''; activeConv = null; viewAfterConvGone(wasSkill); }
       await refreshConvos();
     } catch (e) { say(String(e), 'err'); }
@@ -11341,6 +11675,11 @@
       startedAt,
     };
     running[convId] = optimistic.conn_id;
+    if(splitSnapshots[convId]) {
+      rememberSplit(optimistic);
+      convos=convos.map(c=>c.id===convId?optimistic:c);
+      if(conversationLayout || activeConvId!==convId) return;
+    }
     activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model; threadPerm = optimistic.perm_mode || 'full'; threadEffort = optimistic.effort || '';
     cfReady = false; // 本轮跑完再重新判定是否已建出内容
     // 远程连接：对话就在工作台底部面板里跑，别跳去独立对话页——那样终端就从眼前消失了。
@@ -11366,7 +11705,7 @@
     // 覆盖源按新鲜度择优：运行中改的档位/模型晚于轮末快照落库，刷新过的列表条目更全；
     // 但 refreshConvos 失败时列表是旧值（甚至 startChat 的乐观条目），无脑取列表会把
     // 刚跑完的整轮消息打回去——updated_at 更旧就回退用快照。
-    if (conv && activeConvId === convId) {
+    if (conv) {
       const inList = convos.find((x) => x.id === convId);
       // 时间戳精度是秒：列表旧快照与轮末结果可能 updated_at 相同。相同时消息更多的
       // 才是真正的新版本，否则会丢掉刚返回的 slug/站点 ID，导致新站永远无法自动关联。
@@ -11374,13 +11713,15 @@
         : inList.updated_at > conv.updated_at ? inList
           : inList.updated_at < conv.updated_at ? conv
             : inList.messages.length > conv.messages.length ? inList : conv;
-      activeConv = fresh; threadModel = fresh.model; threadPerm = fresh.perm_mode || 'full'; threadEffort = fresh.effort || '';
+      if (activeConvId === convId) { activeConv = fresh; threadModel = fresh.model; threadPerm = fresh.perm_mode || 'full'; threadEffort = fresh.effort || ''; }
+      if(splitSnapshots[convId]) rememberSplit(fresh);
       convos = convos.some((item) => item.id === fresh.id)
         ? convos.map((item) => item.id === fresh.id ? fresh : item)
         : [fresh, ...convos];
     }
     delete running[convId];
     delete lives[convId];
+    finishSplitQueue(convId, conv, failed, completedTurnStartedAt);
     if (activeConvId === convId) {
       checkCfReady(); // 这轮可能写了文件，重新判定预览/部署是否可用
       scrollSoon(); // 流式缓冲换成权威消息后高度还会变，贴底状态要延续。
@@ -11419,6 +11760,7 @@
     // 上下文超限，保留完整界面历史并让用户从错误卡明确选择「重建继续」。
   }
   async function failTurn(e: unknown, convId: string) {
+    if(splitSnapshots[convId]) {splitErrors[convId]=String(e);restoreSplitQueue(convId);}
     delete running[convId];
     delete lives[convId];
     // 这轮失败：不自动发排队消息，把它放回输入框让用户决定。
@@ -11428,6 +11770,7 @@
     if (activeConvId === convId) say(String(e), 'err');
     await refreshConvos();
     const reloaded = await invoke<Conversation | null>('get_conversation', { id: convId });
+    if(reloaded && splitSnapshots[convId])rememberSplit(reloaded);
     if (reloaded) { if (activeConvId === convId) activeConv = reloaded; }
     else if (activeConvId === convId) { const wasSkill = activeConv?.task_type === 'skill'; activeConv = null; viewAfterConvGone(wasSkill); }
     if (activeConvId === convId) scrollSoon();
@@ -11577,7 +11920,7 @@
   let thumbs = $state<Record<string, string>>({});
   const thumbJobs = new Map<string, Promise<string>>();
   function conversationProject(c: Conversation): string { return c.task_type === 'workspace' || c.task_type === 'skill' ? c.id : c.site_slug; }
-  function thumbKey(p: string): string { return activeConv ? activeConv.conn_id + '|' + conversationProject(activeConv) + '|' + p : '||' + p; }
+  function thumbKey(p: string, c:Conversation|null=activeConv): string { return c ? c.conn_id + '|' + conversationProject(c) + '|' + p : '||' + p; }
   // 读工作目录内图片 → data URI（并发去重；失败缓存空串＝退回文件卡样式）。
   function loadWorkdirImg(connId: string, project: string, p: string): Promise<string> {
     const k = connId + '|' + project + '|' + p;
@@ -11602,16 +11945,17 @@
   }
   function ensureThumb(connId: string, project: string, p: string) { void loadWorkdirImg(connId, project, p); }
   $effect(() => {
-    const c = activeConv;
-    if (!c) return;
-    const project = conversationProject(c);
-    const prefix = c.conn_id + '|' + project + '|';
-    const stale = Object.keys(thumbs).filter((k) => !k.startsWith(prefix));
+    const contexts = splitVisible
+      ? leaves(conversationLayout).map(p=>splitConversation(p.conversation)).filter((c):c is Conversation=>!!c)
+      : activeConv ? [activeConv] : [];
+    const prefixes=contexts.map(c=>c.conn_id+'|'+conversationProject(c)+'|');
+    const stale = Object.keys(thumbs).filter((k) => !prefixes.some(prefix=>k.startsWith(prefix)));
     if (stale.length) { const keep = { ...thumbs }; for (const k of stale) delete keep[k]; thumbs = keep; }
-    for (const m of c.messages) {
-      const atts = m.role === 'user' ? splitAttachments(m.text).atts : splitGenImages(m.text).atts;
-      for (const p of atts) if (isImgPath(p)) ensureThumb(c.conn_id, project, p);
-    }
+    const images=contexts.flatMap(c=>c.messages.flatMap(m=> {
+      const atts=m.role==='user'?splitAttachments(m.text).atts:splitGenImages(m.text).atts;
+      return atts.filter(isImgPath).map(p=>({c,p}));
+    })).slice(-80);
+    for(const {c,p} of images)ensureThumb(c.conn_id,conversationProject(c),p);
   });
   // 点缩略图看大图（点任意处/Esc 关闭）
   let lightbox = $state('');
@@ -11691,7 +12035,7 @@
     draft = queued.text; attachments = queued.atts; queued = null;
   }
   function clearQueued() { queued = null; }
-  function onComposerPaste(e: ClipboardEvent) {
+  function onComposerPaste(e: ClipboardEvent, paneId='') {
     const data = e.clipboardData;
     if (!data) return;
     const files = Array.from(data.files);
@@ -11703,7 +12047,11 @@
       }
     }
     const handled = files.length > 0;
-    for (const file of files) void attachFile(file);
+    const c=paneId?splitConversation(paneId):null;
+    for (const file of files) {
+      if(c)void splitUpload(c,file).catch(error=>{splitErrors[c.id]=String(error);});
+      else void attachFile(file);
+    }
     if (handled) e.preventDefault();
   }
   function onComposerDrop(e: DragEvent) {
@@ -12007,7 +12355,7 @@
   }
   // Markdown 里 <a> 的点击代理：拦下 webview 内导航，改用系统浏览器打开。
   // 行内代码若是图片路径（如 `/uploads/xx.svg`）：点击也用浏览器打开完整地址。
-  function mdClick(e: MouseEvent) {
+  function mdClick(e: MouseEvent, context:Conversation|null=activeConv) {
     const t = e.target as HTMLElement;
     // 链接分支不看选区且永远 preventDefault——点链接是明确意图，而且 WebKit 里点 <a> 不清除
     // 页面残留选区，若因选区早退会放任 webview 自导航（本函数存在的意义就是拦它）。
@@ -12019,8 +12367,8 @@
       if (/^(mailto|tel):/i.test(raw)) { openUrl(raw); return; } // gfm 会把裸邮箱自动变 mailto 链接
       // 工作目录内的路径（相对 / 绝对 / file:）：图片→应用内放大；其他文件→文件管理器里定位
       const p = relWorkPath(raw) || workAbsPath(raw);
-      if (p && isImgPath(p)) { openWorkdirLightbox(p); return; }
-      if (p) { void revealWorkdir(p); return; }
+      if (p && isImgPath(p)) { openWorkdirLightbox(p, context); return; }
+      if (p) { void revealWorkdir(p, context); return; }
       if (raw && raw !== '#') say('这个链接打不开（不是网址，也不是工作目录里的文件）', 'err');
       return;
     }
@@ -12031,10 +12379,10 @@
       const u = codeImgUrl(s);
       if (u) { e.preventDefault(); openUrl(u); return; }
       const rel = relWorkPath(s) || workAbsPath(s);
-      if (rel && isImgPath(rel)) { e.preventDefault(); openWorkdirLightbox(rel); return; }
+      if (rel && isImgPath(rel)) { e.preventDefault(); openWorkdirLightbox(rel, context); return; }
       // 非图片的行内代码：必须带路径分隔符才当文件处理（`package.json`、`v1.2.3` 这类
       // 纯提及不劫持——否则点一下就弹「没找到文件」的噪音）。
-      if (rel && rel.includes('/') && /\.[a-z0-9]{1,8}$/i.test(rel)) { e.preventDefault(); void revealWorkdir(rel); }
+      if (rel && rel.includes('/') && /\.[a-z0-9]{1,8}$/i.test(rel)) { e.preventDefault(); void revealWorkdir(rel, context); }
     }
   }
 
@@ -12056,19 +12404,17 @@
     if (!(v.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(v))) return '';
     return v;
   }
-  function openWorkdirLightbox(p: string) {
-    const c = activeConv;
+  function openWorkdirLightbox(p: string, c:Conversation|null=activeConv) {
     if (!c) return;
     // 点击是明确意图：之前失败过（负缓存空串）的条目给重试机会——文件可能刚被生成出来
-    const k = thumbKey(p);
+    const k = thumbKey(p,c);
     if (thumbs[k] === '') { const t2 = { ...thumbs }; delete t2[k]; thumbs = t2; }
     loadWorkdirImg(c.conn_id, conversationProject(c), p).then((d) => {
       if (d) lightbox = d;
       else say('预览失败：文件不存在、超过 8MB，或在工作目录之外', 'err');
     });
   }
-  async function revealWorkdir(p: string) {
-    const c = activeConv;
+  async function revealWorkdir(p: string, c:Conversation|null=activeConv) {
     if (!c) return;
     try {
       const abs = await invoke<string>('resolve_workdir_file', { connId: c.conn_id, project: conversationProject(c), path: p });
@@ -12574,7 +12920,7 @@
         {#if !collapsedSites.has(g.slug)}
           {#each g.subs as sub (sub.type)}
             {#each sub.items as c (c.id)}
-              <div class="convo {activeConvId === c.id ? 'on' : ''}" role="button" tabindex="0"
+              <div class="convo {activeConvId === c.id ? 'on' : ''}" onpointerdown={(e)=>startConversationPointerDrag(e,c.id)} draggable="true" ondragstart={(e)=>startConversationDrag(e,c.id)} ondragend={endConversationDrag} role="button" tabindex="0"
                 onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
                 <div class="convo-body">
                   <span class="convo-bi" title={brainLabel(c.brain)}><BrainIcon brain={c.brain} size={11} /></span>
@@ -12645,8 +12991,22 @@
     </div>
   </aside>
 
+  {#if splitDragId && splitDragPoint}
+    {@const dragConversation=splitConversation(splitDragId)}
+    {#if dragConversation}
+      <div class="conversation-drag-ghost" style={`--drag-x:${splitDragPoint.x}px;--drag-y:${splitDragPoint.y}px`} aria-hidden="true">
+        <span class="conversation-drag-icon"><BrainIcon brain={dragConversation.brain} size={12} /></span>
+        <span class="conversation-drag-title">{dragConversation.title}</span>
+      </div>
+    {/if}
+  {/if}
+
   <!-- 主区 -->
-  <section class="main">
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <section class="main" aria-label="工作区" data-pilot-workarea ondragover={singleConversationDragOver}
+    ondragleave={(e)=>{if(!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node))singleDropEdge=null;}}
+    ondrop={(e)=>{if(splitDragId&&singleDropEdge){e.preventDefault();const id=splitDragId,edge=singleDropEdge;endConversationDrag();void addSplit(id,edge);}}}>
+    {#if singleDropEdge && !splitVisible}<div class={`single-split-preview ${singleDropEdge}`} aria-hidden="true"><span>分屏视图</span></div>{/if}
     {#if imgTip}
       {@const iu = imgTip.url}
       <div class="imgtip" class:ready={imgTipReady} class:below={imgTip.below} style="left:{imgTip.x}px; top:{imgTip.y}px">
@@ -12658,7 +13018,10 @@
       <div class="lightbox" onclick={() => (lightbox = '')}><img src={lightbox} alt="附件大图" /></div>
     {/if}
 
-    {#if view === 'skills'}
+    {#if splitVisible && conversationLayout}
+      <ConversationCanvas layout={conversationLayout} focused={splitFocused} dragging={!!splitDragId} dragConversation={splitDragId} preview={splitPointerPreview} content={splitContent}
+        onfocus={focusSplit} ondrop={(target,edge)=>{const id=splitDragId;endConversationDrag();void addSplit(id,edge,target);}} onresize={(layout)=>conversationLayout=layout}/>
+    {:else if view === 'skills'}
       <!-- 通用技能是 Pilot 全局能力，不隶属任何连接。 -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
@@ -14083,7 +14446,7 @@
             <!-- 命令行关着时对话吃满整个主区（固定高度只在两者共存时才有意义） -->
             <div class="wb-chat" class:solo={!wb.term} style={wb.term ? `height:${wb.chatH}px` : ''}>
               {#if activeConv && activeConv.conn_id === activeConnId}
-                {@render convPane()}
+                {@render convPane(activeConv)}
               {:else}
                 <!-- 还没有对话：这里就是起点（发出去就新建一条，走 startChat 那套）。
                      外层必须是 .composer-wrap —— 输入框的样式挂在 `.composer.big, .composer-wrap .composer` 上，
@@ -14262,45 +14625,8 @@
       </div>
 
     {:else}
-      <!-- 对话线程 -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info">
-          <b>{activeConv?.title}</b>
-          <small>
-            {#if activeConvIsSkill}
-              <SkillFav domain={activeConversationSkill?.site_domain || ''} size={13} />
-              {activeConversationSkill?.name || activeConv?.site_name || activeConv?.skill_ids?.[0] || '技能'}
-              {#if activeConversationSkill?.site_domain}<span class="skill-session-domain">{activeConversationSkill.site_domain}</span>{/if}
-              <span class="skill-lock-label">已锁定</span>
-            {:else if activeConvIsWorkspace}
-              {@render workspaceMark(13)} {activeConv?.workspace_dir ? workspaceFolderName(activeConv.workspace_dir) : '纯对话'}
-            {:else if isMultiSiteConversation(activeConv)}
-              {@render multiSiteMark(13)} <span data-tip={convSitesTip(activeConv)}>{activeConv?.site_name || `多站 · ${activeConv?.site_slugs?.length ?? 0} 站`}</span>
-            {:else if activeConvIsCf}
-              {@render cfMark(13)} {activeConv?.site_name || activeConv?.site_slug}
-            {:else if sitebuildIconPending(activeConv)}
-              {@render siteBuildMark(13)} {activeConv?.site_slug ? (activeConv?.site_name || activeConv?.site_slug) : '新站建设'}
-            {:else}
-              <SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} />
-              {#if (activeConv?.site_slugs?.length ?? 0) > 1}<span data-tip={convSitesTip(activeConv)}>{activeConv?.site_name}</span>{:else}{activeConv?.site_name || activeConv?.site_slug}{/if}
-            {/if}
-            · {conversationTaskLabel(activeConv)} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}
-          </small>
-        </div>
-        {#if activeSiteUrl}
-          <button class="th-open" onclick={() => openUrl(activeSiteUrl)} title="打开 {activeSiteUrl}">{hostOf(activeSiteUrl)}<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
-        {:else if activeGcmsSite && activeConvConn}
-          <button
-            class="th-open"
-            disabled={activeSitePreviewBusy}
-            onclick={() => void openActiveSitePreview()}
-            title="通过 GCMS API 打开短时私有预览"
-          >{activeSitePreviewBusy ? '正在打开…' : '预览站点'}<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
-        {/if}
-      </header>
-
-      {@render convPane()}
+      {@render conversationHeader(activeConv)}
+      {@render convPane(activeConv)}
     {/if}
   </section>
 </main>
@@ -14374,7 +14700,10 @@
 {/if}
 
 <!-- 消息气泡片段 -->
-{#snippet bubble(m: Message, isLast: boolean)}
+{#snippet bubble(m: Message, isLast: boolean, context:Conversation|null=activeConv)}
+  {@const bubbleConv=context}
+  {@const bubbleId=context?.id??''}
+  {@const bubbleBusy=!!running[bubbleId]}
   {#if m.role === 'user'}
     {@const ua = splitAttachments(m.text)}
     <div class="msg user"><div class="ubody">
@@ -14382,9 +14711,9 @@
       {#if ua.atts.length}
         <div class="ub-atts" class:only={!ua.body.trim()}>
           {#each ua.atts as p (p)}
-            {#if isImgPath(p) && thumbs[thumbKey(p)] !== ''}
-              {#if thumbs[thumbKey(p)]}
-                <button class="ub-att-img" data-tip={p.split('/').pop()} onclick={() => (lightbox = thumbs[thumbKey(p)])}><img src={thumbs[thumbKey(p)]} alt={p.split('/').pop()} onerror={() => (thumbs = { ...thumbs, [thumbKey(p)]: '' })} /></button>
+            {#if isImgPath(p) && thumbs[thumbKey(p,context)] !== ''}
+              {#if thumbs[thumbKey(p,context)]}
+                <button class="ub-att-img" data-tip={p.split('/').pop()} onclick={() => (lightbox = thumbs[thumbKey(p,context)])}><img src={thumbs[thumbKey(p,context)]} alt={p.split('/').pop()} onerror={() => (thumbs = { ...thumbs, [thumbKey(p,context)]: '' })} /></button>
               {:else}
                 <!-- 数据未到：同尺寸占位，图片就位零布局跳动 -->
                 <span class="ub-att-img ph" data-tip={p.split('/').pop()}></span>
@@ -14408,42 +14737,42 @@
         {#if m.tools.length}{@render cmds(m.tools)}{/if}
         {#if m.error && m.limit_reset != null}
           <div class="limit-card">
-            <div class="limit-head">⏳ {brainTitle(activeConv?.brain)} 额度已用完</div>
+            <div class="limit-head">⏳ {brainTitle(bubbleConv?.brain)} 额度已用完</div>
             {#if (m.limit_reset ?? 0) > 0}
               <div class="limit-sub">预计 {fmtClock(m.limit_reset ?? 0)} 恢复{#if (m.limit_reset ?? 0) * 1000 > nowTick} · 还有 {fmtRemain((m.limit_reset ?? 0) * 1000 - nowTick)}{/if}</div>
             {:else}
               <div class="limit-sub">订阅套餐的时间窗限额已触顶，稍后会自动恢复；也可以稍等片刻手动重试。</div>
             {/if}
-            {#if isLast && !viewBusy}
+            {#if isLast && !bubbleBusy}
               <div class="limit-actions">
-                {#if limitAuto[activeConvId]}
-                  <button class="retry-btn is-armed" onclick={() => disarmLimitAuto(activeConvId)}>✓ 已排队，到点自动续跑 · 点击取消</button>
+                {#if limitAuto[bubbleId]}
+                  <button class="retry-btn is-armed" onclick={() => disarmLimitAuto(bubbleId)}>✓ 已排队，到点自动续跑 · 点击取消</button>
                 {:else if (m.limit_reset ?? 0) * 1000 > nowTick}
-                  <button class="retry-btn" onclick={() => armLimitAuto(activeConvId, m.limit_reset ?? 0)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.6" stroke="currentColor" stroke-width="1.4" /><path d="M8 5.2V8l2 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>到点自动续跑</button>
+                  <button class="retry-btn" onclick={() => armLimitAuto(bubbleId, m.limit_reset ?? 0)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.6" stroke="currentColor" stroke-width="1.4" /><path d="M8 5.2V8l2 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>到点自动续跑</button>
                 {/if}
-                {#if activeConv?.session_ref}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>立即重试</button>{/if}
+                {#if bubbleConv?.session_ref}<button class="retry-btn" onclick={() => retry(bubbleId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>立即重试</button>{/if}
               </div>
               <div class="limit-hint">也可以在右下角把模型切到另一家继续。</div>
             {/if}
           </div>
         {:else if m.error}
-          <div class="text is-err">{@render richText(m.text)}{#if isLast && !viewBusy}{#if activeConv?.session_ref && !retryExhausted[activeConvId]}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}<button class="retry-btn" title="换一个全新会话原地续跑（自动带上历史摘要）——用于会话状态损坏、重试无效时" onclick={() => rebuildSession(activeConvId)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2.6 8a5.4 5.4 0 0 1 9.3-3.7M13.4 8a5.4 5.4 0 0 1-9.3 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11.6 1.6v2.9h2.9M4.4 14.4v-2.9H1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重建继续</button>{/if}</div>
+          <div class="text is-err">{@render richText(m.text)}{#if isLast && !bubbleBusy}{#if bubbleConv?.session_ref && !retryExhausted[bubbleId]}<button class="retry-btn" onclick={() => retry(bubbleId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}<button class="retry-btn" title="换一个全新会话原地续跑（自动带上历史摘要）——用于会话状态损坏、重试无效时" onclick={() => rebuildSession(bubbleId)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2.6 8a5.4 5.4 0 0 1 9.3-3.7M13.4 8a5.4 5.4 0 0 1-9.3 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11.6 1.6v2.9h2.9M4.4 14.4v-2.9H1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重建继续</button>{/if}</div>
         {:else}
           {@const ga = splitGenImages(m.text)}
           <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-          <div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(ga.body)}</div>
+          <div class="text md" onclick={(e)=>mdClick(e,context)} onauxclick={(e)=>mdClick(e,context)}>{@html mdRender(ga.body)}</div>
           {#if ga.atts.length}
             <!-- codex 生图产物：缩略图（点击放大）；读不到的退回文件名卡（点击访达定位） -->
             <div class="ub-atts gen-imgs">
               {#each ga.atts as p (p)}
-                {#if isImgPath(p) && thumbs[thumbKey(p)] !== ''}
-                  {#if thumbs[thumbKey(p)]}
-                    <button class="ub-att-img" data-tip={p.split(/[\\/]/).pop()} onclick={() => (lightbox = thumbs[thumbKey(p)])}><img src={thumbs[thumbKey(p)]} alt={p.split(/[\\/]/).pop()} onerror={() => (thumbs = { ...thumbs, [thumbKey(p)]: '' })} /></button>
+                {#if isImgPath(p) && thumbs[thumbKey(p,context)] !== ''}
+                  {#if thumbs[thumbKey(p,context)]}
+                    <button class="ub-att-img" data-tip={p.split(/[\\/]/).pop()} onclick={() => (lightbox = thumbs[thumbKey(p,context)])}><img src={thumbs[thumbKey(p,context)]} alt={p.split(/[\\/]/).pop()} onerror={() => (thumbs = { ...thumbs, [thumbKey(p,context)]: '' })} /></button>
                   {:else}
                     <span class="ub-att-img ph" data-tip={p.split(/[\\/]/).pop()}></span>
                   {/if}
                 {:else}
-                  <button class="ub-att as-btn" title={p} onclick={() => void revealWorkdir(p)}>
+                  <button class="ub-att as-btn" title={p} onclick={() => void revealWorkdir(p,context)}>
                     <span class="ub-att-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" /><circle cx="5.7" cy="6.2" r="1.1" fill="currentColor" /><path d="M3 12.4l3.3-3.1 2.1 1.9 2.4-2.6 2.2 2.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
                     <span class="ub-att-n">{p.split(/[\\/]/).pop()}</span>
                   </button>
@@ -14461,7 +14790,7 @@
             {#if createdProposals.has(proposalKey(m.proposal))}
               <div class="proposal-done">✓ 已创建定时任务，可在左栏「定时任务」查看</div>
             {:else}
-              <button class="btn primary small" onclick={() => m.proposal && openTaskFromProposal(m.proposal)}>创建定时任务…</button>
+              <button class="btn primary small" onclick={() => m.proposal && openTaskFromProposal(m.proposal,context)}>创建定时任务…</button>
             {/if}
           </div>
         {/if}
@@ -14600,15 +14929,15 @@
     >{@render cfMark(13)}</button>
   </span>
 {/snippet}
-<!-- 对话主体（消息 + 输入框）。抽成 snippet 是为了两处共用同一份：
-     独立的对话页，和远程工作台底部的对话面板。所有状态都是模块级的，直接用即可。
-     注意 bind:this={threadEl} —— 同一时刻只会渲染一处（对话页与远程视图互斥），不会打架。 -->
-{#snippet convPane()}
-  <div class="thread" bind:this={threadEl} onscroll={onThreadScroll}>
-    <div class="thread-inner" bind:this={threadInnerEl}>
-      {#each shownMessages as m, i (i)}
-        {@render bubble(m, i === shownMessages.length - 1)}
-      {/each}
+<!-- 单会话、多个窗格和远程工作台共用原始对话组件。
+     运行状态按 context.id 查找；输入、滚动和操作由所属窗格绑定，不能读取其他窗格的焦点状态。 -->
+{#snippet conversationActivity(context:Conversation, suppressExternalAccess=false)}
+  {@const activeConv=context}
+  {@const viewBusy=!!running[context.id]}
+  {@const liveView=lives[context.id]}
+  {@const activeConversationUnlockAction=conversationGcmsUnlockAction(context)}
+  {@const activeGcmsExternalAccessPending=suppressExternalAccess}
+  {@const activePermits=pendingPermits.filter(p=>p.conv===context.id)}
       {#if viewBusy && liveView}
         {@const progress = executionProgress(liveView, nowMs)}
         <div class="msg assistant">
@@ -14622,7 +14951,7 @@
               </div>
             {/if}
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-            {#if liveView.renderedText}<div class="text md live-text" onclick={mdClick} onauxclick={mdClick}>{@html liveView.renderedText}</div>{/if}
+            {#if liveView.renderedText}<div class="text md live-text" onclick={(e)=>mdClick(e,activeConv)} onauxclick={(e)=>mdClick(e,activeConv)}>{@html liveView.renderedText}</div>{/if}
             {#if progress.thinking}
               <div class="codex-thinking" role="status" aria-live="polite">
                 <span>正在思考</span>
@@ -14715,9 +15044,9 @@
             <div class="permit-meta">{activeConversationUnlockAction.detail}</div>
             <div class="permit-act">
               {#if activeConversationUnlockAction.adminPath}
-                <button class="btn sm" onclick={() => openGcmsAdmin(activeConversationUnlockAction.adminPath)}>在 GCMS 后台打开 ↗</button>
+                <button class="btn sm" onclick={() => openSplitAdmin(activeConv,activeConversationUnlockAction.adminPath)}>在 GCMS 后台打开 ↗</button>
               {/if}
-              <button class="btn sm primary" onclick={() => openGcmsControlUnlock(activeConversationUnlockAction)}>输入密码并继续</button>
+              <button class="btn sm primary" onclick={() => openGcmsControlUnlock(activeConversationUnlockAction,activeConv)}>输入密码并继续</button>
             </div>
           </div>
         </div>
@@ -14746,15 +15075,106 @@
           </div>
         </div>
       {/each}
+
+{/snippet}
+
+{#snippet conversationHeader(context:Conversation|null, paneId='')}
+  {@const meta=conversationPresentation(context)}
+  {@const activeConv=context}
+  {@const activeConvConn=meta.conn}
+  {@const activeConversationSkill=meta.skill}
+  {@const activeGcmsSite=meta.site}
+  {@const activeSiteUrl=meta.url}
+  {@const activeSitePreviewBusy=!!meta.site&&!!meta.conn&&sitePreviewIsBusy(meta.conn.id,meta.site.id)}
+  {@const headerDomain=activeSiteUrl?hostOf(activeSiteUrl):(activeConversationSkill?.site_domain||((activeConv?.site_slug??'').includes('.')?activeConv?.site_slug??'':''))}
+  {@const headerSiteIcon=activeGcmsSite?.favicon||activeGcmsSite?.logo||(headerDomain?faviconGuess(`https://${headerDomain}`):siteFav(activeConv?.site_slug??''))}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head conversation-thread-head" class:multi={leaves(conversationLayout).length>1} onmousedown={(e)=>{if(!paneId)startDrag(e);}}>
+        <div class="th-info" role="button" tabindex="0" aria-label={`拖动对话 ${context?.title} 以分屏`} onpointerdown={(e)=>{if(context)startConversationPointerDrag(e,context.id);}} onkeydown={(e)=>{if(e.key==='Escape')endConversationDrag();}}>
+          <b class="conversation-head-title" data-tip={activeConv?.title}>
+            <span class="conversation-head-model" data-tip={brainLabel(activeConv?.brain??'claude')}><BrainIcon brain={activeConv?.brain??'claude'} size={14} /></span>
+            <span>{activeConv?.title}</span>
+          </b>
+        </div>
+        {#if activeSiteUrl}
+          <button class="th-open conversation-site-link" onclick={() => openUrl(activeSiteUrl)} title="打开 {activeSiteUrl}"><SiteFav src={headerSiteIcon} label={headerDomain} size={14} /><span>{headerDomain}</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+        {:else if activeGcmsSite && activeConvConn}
+          <button
+            class="th-open conversation-site-link"
+            disabled={activeSitePreviewBusy}
+            onclick={() => {if(meta.site && meta.conn)void openSitePreview(meta.site,meta.conn.id);}}
+            title="通过 GCMS API 打开短时私有预览"
+          ><SiteFav src={headerSiteIcon} label={activeGcmsSite.slug} size={14} /><span>{activeSitePreviewBusy ? '正在打开…' : (headerDomain||activeGcmsSite.slug)}</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+        {:else if headerDomain}
+          <span class="th-open conversation-site-link static" title={headerDomain}><SiteFav src={headerSiteIcon} label={headerDomain} size={14} /><span>{headerDomain}</span></span>
+        {/if}
+        {#if paneId && leaves(conversationLayout).length>1}<button class="x pane-close" title="关闭窗格，不停止任务" aria-label="关闭窗格" onclick={()=>closeSplit(paneId)}>×</button>{/if}
+      </header>
+
+{/snippet}
+
+{#snippet splitContent(id:string, paneId:string)}
+  {@const c=splitConversation(id)}
+  {#if c && splitDrafts[id]}
+    {#key c.id}
+      {@render conversationHeader(c,paneId)}
+      {@render convPane(c,paneId)}
+    {/key}
+  {/if}
+{/snippet}
+
+{#snippet convPane(context:Conversation|null, paneId='')}
+  {@const meta=conversationPresentation(context)}
+  {@const activeConv=context}
+  {@const activeConvConn=meta.conn}
+  {@const activeConvIsCf=meta.conn?.kind==='cloudflare'}
+  {@const activeConvIsSkill=context?.task_type==='skill'}
+  {@const activeConvIsWorkspace=context?.task_type==='workspace'}
+  {@const activeConversationSkill=meta.skill}
+  {@const activeGcmsSite=meta.site}
+  {@const activeSiteUrl=meta.url}
+  {@const scoped=!!paneId && !!context}
+  {@const id=context?.id??''}
+  {@const activeConvId=id}
+  {@const activeConvIsSsh=meta.conn?.kind==='ssh'}
+  {@const viewBusy=!!running[id]}
+  {@const paneState=scoped?splitDrafts[id]:null}
+  {@const draft=paneState?paneState.text:legacyComposer().text}
+  {@const attachments=paneState?paneState.files:legacyComposer().files}
+  {@const queued=scoped?(splitQueued[id]?{convId:id,text:splitQueued[id].text,atts:splitQueued[id].files}:null):legacyComposer().queued}
+  {@const cfReady=scoped?paneCfReady[id]??false:legacyComposer().cfReady}
+  {@const uploading=scoped?!!paneUploading[id]:attaching}
+  {@const readiness=conversationReadiness(context)}
+  {@const activeSiteReadinessContext=readiness.activeSiteReadinessContext}
+  {@const activeReadinessSite=readiness.activeReadinessSite}
+  {@const activeSiteReadinessWaitingForSite=readiness.activeSiteReadinessWaitingForSite}
+  {@const activeSiteReadinessOpen=readiness.activeSiteReadinessOpen}
+  {@const activeSiteReadinessItems=readiness.activeSiteReadinessItems}
+  {@const activeSiteReadinessPending=readiness.activeSiteReadinessPending}
+  {@const activeSiteReadinessVisible=readiness.activeSiteReadinessVisible}
+  {@const activeSiteReadinessDoneCount=readiness.activeSiteReadinessDoneCount}
+  {@const activeSiteReadinessBlockers=readiness.activeSiteReadinessBlockers}
+  {@const activeSiteReadinessTodos=readiness.activeSiteReadinessTodos}
+  {@const activeSiteReadinessChecks=readiness.activeSiteReadinessChecks}
+  {@const activeSiteReadinessSummary=readiness.activeSiteReadinessSummary}
+  {@const activeSiteReadinessDetail=readiness.activeSiteReadinessDetail}
+  {@const activeGcmsExternalAccessPending=conversationExternalAccessPending(context,readiness)}
+  {@const messages=context?.messages.filter(m=>!m.hidden)??[]}
+  <div class="thread" use:paneScroll={scoped?id:''} onscroll={(e)=>{if(!scoped)onThreadScroll(e);}}>
+    <div class="thread-inner" >
+      {#each messages as m, i (i)}
+        {@render bubble(m, i === messages.length - 1,context)}
+      {/each}
+      {#if activeConv}{@render conversationActivity(activeConv,activeGcmsExternalAccessPending)}{/if}
     </div>
   </div>
 
   <div class="composer-wrap">
     {#if activeConvIsCf}
       <div class="cf-bar">
-        <span class="tipwrap" data-tip={cfReady ? '在本机跑起来看效果（关预览窗即停）' : '先让 AI 建出页面再预览'}><button class="cb-prev" onclick={startPreview} disabled={previewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8s-2.4 4.4-6.4 4.4S1.6 8 1.6 8Z" stroke="currentColor" stroke-width="1.2" /><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.2" /></svg>{previewBusy ? '启动中…' : '预览'}</button></span>
-        <span class="tipwrap" data-tip={cfReady ? '发布到 Cloudflare 上线' : '先让 AI 建出页面再部署'}><button class="cb-prev" onclick={fillDeploy} disabled={viewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 12.5V4M4.5 7 8 3.5 11.5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>部署</button></span>
-        <span class="tipwrap" data-tip={cfReady ? '存成模板，以后一键复用' : '先让 AI 建出页面再存'}><button class="cb-prev dim" onclick={openSaveTmpl} disabled={!cfReady}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.6" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>存模板</button></span>
+        <span class="tipwrap" data-tip={cfReady ? '在本机跑起来看效果（关预览窗即停）' : '先让 AI 建出页面再预览'}><button class="cb-prev" onclick={()=>scoped?panePrefill(id,()=>void startPreview()):void startPreview()} disabled={previewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8s-2.4 4.4-6.4 4.4S1.6 8 1.6 8Z" stroke="currentColor" stroke-width="1.2" /><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.2" /></svg>{previewBusy ? '启动中…' : '预览'}</button></span>
+        <span class="tipwrap" data-tip={cfReady ? '发布到 Cloudflare 上线' : '先让 AI 建出页面再部署'}><button class="cb-prev" onclick={()=>scoped?panePrefill(id,fillDeploy):fillDeploy()} disabled={viewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 12.5V4M4.5 7 8 3.5 11.5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>部署</button></span>
+        <span class="tipwrap" data-tip={cfReady ? '存成模板，以后一键复用' : '先让 AI 建出页面再存'}><button class="cb-prev dim" onclick={()=>scoped?panePrefill(id,openSaveTmpl):openSaveTmpl()} disabled={!cfReady}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.6" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>存模板</button></span>
       </div>
     {/if}
     {#if activeSiteReadinessVisible}
@@ -14765,7 +15185,7 @@
         aria-label="站点上线准备"
       >
         <div class="site-ready-summary">
-          <button class="site-ready-toggle" onclick={toggleSiteReadiness} aria-expanded={activeSiteReadinessOpen}>
+          <button class="site-ready-toggle" onclick={()=>siteReadinessOpenFor=activeSiteReadinessOpen?'':id} aria-expanded={activeSiteReadinessOpen}>
             <span class="site-ready-icon" aria-hidden="true">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
                 <rect x="2.3" y="2.3" width="11.4" height="11.4" rx="2" stroke="currentColor" stroke-width="1.25" />
@@ -14792,9 +15212,7 @@
             <button
               class="site-ready-continue"
               class:unlock={activeGcmsExternalAccessPending && !!activeReadinessSite}
-              onclick={() => activeGcmsExternalAccessPending && activeReadinessSite
-                ? void openGcmsPublicAccessEditor()
-                : fillSiteReadiness()}
+              onclick={() => scoped?panePrefill(id,()=>activeGcmsExternalAccessPending && activeReadinessSite?void openGcmsPublicAccessEditor():fillSiteReadiness()):activeGcmsExternalAccessPending && activeReadinessSite?void openGcmsPublicAccessEditor():fillSiteReadiness()}
               disabled={!!gcmsPublicAccessOpeningFor || (activeGcmsExternalAccessPending && !!activeReadinessSite && !activeConvConn)}
             >
               {#if activeGcmsExternalAccessPending && activeReadinessSite}
@@ -14815,7 +15233,7 @@
                 {#each activeSiteReadinessPending as item (item.id)}
                   <button
                     class="site-ready-item {item.tone}"
-                    onclick={() => fillSiteReadiness(item)}
+                    onclick={() => scoped?panePrefill(id,()=>fillSiteReadiness(item)):fillSiteReadiness(item)}
                     disabled={item.id === 'identify'}
                   >
                     <span class="site-ready-dot" aria-hidden="true"></span>
@@ -14844,14 +15262,17 @@
         {/if}
       </section>
     {/if}
-    <div class="composer" class:fileover={composerFileOver} role="group" aria-label="消息输入"
-      ondragover={onComposerDragOver} ondragleave={onComposerDragLeave} ondrop={onComposerDrop}>
+    <div class="composer" class:fileover={!scoped&&composerFileOver} role="group" aria-label="消息输入"
+      ondragover={(e)=>{if(scoped){if(e.dataTransfer?.types.includes('Files'))e.preventDefault();}else onComposerDragOver(e);}}
+      ondragleave={(e)=>{if(!scoped)onComposerDragLeave(e);}}
+      ondrop={(e)=>{if(scoped&&e.dataTransfer?.files.length){e.preventDefault();e.stopPropagation();void uploadPaneFiles(id,e.dataTransfer.files);}else if(!scoped)onComposerDrop(e);}}>
+      {#if scoped && splitErrors[id]}<p class="pane-error" role="alert">{splitErrors[id]}</p>{/if}
       {#if queued && queued.convId === activeConvId}
         <div class="queued-row">
           <span class="queued-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.7V8l2.2 1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
           <span class="queued-t">等这轮结束后发送：{queued.text || '（仅附件）'}{#if queued.atts.length} · {queued.atts.length} 个文件{/if}</span>
-          <button class="queued-btn" onclick={editQueued}>编辑</button>
-          <button class="queued-x" aria-label="清除等待消息" onclick={clearQueued}>×</button>
+          <button class="queued-btn" onclick={()=>scoped?restoreSplitQueue(id):editQueued()}>编辑</button>
+          <button class="queued-x" aria-label="清除等待消息" onclick={()=>{if(scoped)delete splitQueued[id];else clearQueued();}}>×</button>
         </div>
       {/if}
       {#if attachments.length}
@@ -14860,16 +15281,16 @@
             <div class="attach-chip">
               {#if a.preview}<img class="attach-img" src={a.preview} alt="" />{:else}<span class="attach-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9 1.8H4.5A1.3 1.3 0 0 0 3.2 3.1v9.8a1.3 1.3 0 0 0 1.3 1.3h7a1.3 1.3 0 0 0 1.3-1.3V5.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9 1.8v3.7h3.8" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg></span>{/if}
               <span class="attach-name" title={a.name}>{a.name}</span>
-              <button class="attach-x" aria-label="移除附件" onclick={() => removeAttachment(i)}>×</button>
+              <button class="attach-x" aria-label="移除附件" onclick={() => {if(paneState)paneState.files=paneState.files.filter((_,n)=>n!==i);else removeAttachment(i);}}>×</button>
             </div>
           {/each}
-          {#if attaching}<span class="attach-loading">上传中…</span>{/if}
         </div>
       {/if}
-      <textarea bind:value={draft} bind:this={draftEl} use:autogrow rows="1" placeholder={viewBusy ? '输入下一条，回车排队，等这轮结束自动发送' : '继续说…（Enter 发送，Shift+Enter 换行，可粘贴/拖入文件）'}
+      {#if uploading}<span class="attach-loading">上传中…</span>{/if}
+      <textarea bind:value={()=>draft,(v)=>scoped?setPaneText(id,v):setLegacyDraft(v)} use:paneInput={scoped?id:''} aria-label={`给 ${context?.title||'当前对话'} 发消息`} rows="1" placeholder={viewBusy ? '输入下一条，回车排队，等这轮结束自动发送' : '继续说…（Enter 发送，Shift+Enter 换行，可粘贴/拖入文件）'}
         oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
-        onpaste={onComposerPaste}
-        onkeydown={(e) => onComposerKey(e, viewBusy ? queueMessage : send)}></textarea>
+        onpaste={(e)=>onComposerPaste(e,scoped?id:'')}
+        onkeydown={(e) => onComposerKey(e, scoped ? ()=>void splitSubmit(id) : viewBusy ? queueMessage : send)}></textarea>
       <div class="composer-bar">
         <div class="cb-left">
           {#if activeConvIsSkill}
@@ -14896,17 +15317,17 @@
           {/if}
         </div>
         <div class="cb-right">
-          <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude', activeConvIsSsh)} tone={permTone(threadPerm)} tip={permTipFor(activeConv?.brain ?? 'claude', threadPerm, activeConvIsSsh)} onchange={persistThreadPerm} />
+          <Dropdown compact value={context?.perm_mode||'full'} options={permOptsFor(activeConv?.brain ?? 'claude', activeConvIsSsh)} tone={permTone(context?.perm_mode||'full')} tip={permTipFor(activeConv?.brain ?? 'claude', context?.perm_mode||'full', activeConvIsSsh)} onchange={(v)=>scoped&&context?void splitSetting(context,'perm',v):persistThreadPerm(v)} />
           <!-- 模型下拉列全部厂商（图标区分）：同厂商下一轮生效；跨厂商确认后以历史摘要重建续跑 -->
-          <ModelFx options={threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${threadModel}`} effort={threadEffort} fast={activeConv?.fast ?? false} fastOk={brains?.claude_fast_ok ?? false} lockModel={viewBusy} onpick={(v: string) => { void pickThreadCombo(v); }} oneffort={persistThreadEffort} onfast={(v: boolean) => { void persistThreadFast(v); }} />
+          <ModelFx options={scoped&&context?splitModelOptions(context):threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${context?.model??''}`} effort={context?.effort??''} fast={activeConv?.fast ?? false} fastOk={brains?.claude_fast_ok ?? false} lockModel={viewBusy} onpick={(v: string) => { if(scoped&&context)void splitSetting(context,'model',v);else void pickThreadCombo(v); }} oneffort={(v:string)=>scoped&&context?void splitSetting(context,'effort',v):persistThreadEffort(v)} onfast={(v: boolean) => { if(scoped&&context)void splitSetting(context,'fast',v);else void persistThreadFast(v); }} />
           <UsageRing ctx={activeConv?.ctx_tokens ?? 0} limit={ctxLimitAdaptive(activeConv?.brain ?? 'claude', activeConv?.model ?? '', activeConv?.ctx_tokens ?? 0)} total={activeConv?.total_tokens ?? 0} />
           {#if viewBusy}
             {#if draft.trim() || attachments.length}
-              <button class="send queue" onclick={queueMessage} title="排队：等这轮结束后自动发送">↑</button>
+              <button class="send queue" disabled={uploading} onclick={()=>scoped?void splitSubmit(id):queueMessage()} title="排队：等这轮结束后自动发送">↑</button>
             {/if}
-            <button class="send stop" onclick={stop} title="停止">■</button>
+            <button class="send stop" onclick={()=>scoped?void splitStop(id):stop()} title="停止">■</button>
           {:else}
-            <button class="send" onclick={send} disabled={!draft.trim() && !attachments.length} title="发送（Enter）">↑</button>
+            <button class="send" onclick={()=>scoped?void splitSubmit(id):send()} disabled={uploading || (!draft.trim() && !attachments.length)} title="发送（Enter）">↑</button>
           {/if}
         </div>
       </div>
@@ -18782,6 +19203,31 @@
 {/if}
 
 <style>
+  .pane-close{position:static;flex:none;align-self:center}
+  .thread-head.conversation-thread-head{align-items:center}
+  .thread-head.multi{padding:7px 16px;min-height:38px;align-items:center}
+  .thread-head.multi .th-info{display:block;min-width:0}
+  .conversation-head-title{display:flex!important;align-items:center;gap:7px;width:100%;min-width:0}
+  .conversation-head-title>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .conversation-head-model{display:inline-flex;align-items:center;flex:none;line-height:0}
+  .conversation-head-model :global(.bi){display:block}
+  .conversation-site-link{max-width:52%;min-width:0;flex:none}
+  .conversation-site-link>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .conversation-site-link.static{cursor:default;color:var(--dim)}
+  .thread-head .th-info[role="button"]{cursor:grab}
+  .pane-error{color:var(--danger,#ad3228);font-size:13px;margin:8px 16px;overflow-wrap:anywhere}
+  :global(.pane) .thread{min-height:0;overscroll-behavior:contain}
+  :global(.canvas.multi .pane) .thread-inner{padding:18px 20px 8px}
+  :global(.canvas.multi .pane) .composer-wrap{padding:8px 16px 14px;max-height:55%;overflow-y:auto}
+  :global(.canvas.multi .pane) .composer-bar{flex-wrap:wrap}
+  :global(.canvas.multi .pane) .cb-right{margin-left:auto;max-width:100%;flex-wrap:wrap}
+  .conversation-drag-ghost{position:fixed;z-index:1000;left:clamp(12px,calc(var(--drag-x) + 14px),calc(100vw - 312px))!important;top:clamp(12px,calc(var(--drag-y) + 12px),calc(100vh - 50px))!important;width:300px;max-width:calc(100vw - 24px);height:38px;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:0 12px;background:color-mix(in srgb,var(--bg,#fff) 96%,transparent);border:1px solid var(--border,#e7e5df);border-radius:8px;box-shadow:0 8px 24px #2d29231c;pointer-events:none;color:var(--fg,#282723)}
+  .conversation-drag-icon{display:inline-flex;align-items:center;line-height:0;flex:none}
+  .conversation-drag-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:500}
+  .single-split-preview{position:absolute;z-index:100;pointer-events:none;box-sizing:border-box;display:grid;place-items:center;background:color-mix(in srgb,var(--bg,#fff) 60%,transparent);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border:2px solid #2f80ed;border-radius:8px;box-shadow:0 0 0 1px #2f80ed24}
+  .single-split-preview.left{inset:0 50% 0 0}.single-split-preview.right{inset:0 0 0 50%}.single-split-preview.top{inset:0 0 50%}.single-split-preview.bottom{inset:50% 0 0}
+  .single-split-preview span{padding:6px 12px;border-radius:18px;background:#2f80ed;color:#fff;font-size:12px;font-weight:500;box-shadow:0 4px 14px #1a5ca733}
+
   /* 远程工作台：终端主区 + 底部对话 + 右侧文件（VS Code 那套）。
      每层都 min-*:0 —— flex 子项默认 min-size:auto，不清零的话终端撑着不缩、面板挤不出来。 */
   .wb { flex: 1; min-height: 0; display: flex; }
@@ -19500,13 +19946,19 @@
   .app.rail-collapsed.top-update-visible .thread-head { padding-left: 167px; }
   .app.rail-collapsed.top-update-visible.fs .thread-head,
   .app.rail-collapsed.top-update-visible.win .thread-head { padding-left: 127px; }
+  /* 会话头同时承担应用标题栏：展开、折叠与分屏都固定成与 win-tools 相同的 30px，
+     避免域名按钮的上下 padding 把标题整行撑低。 */
+  .thread-head.conversation-thread-head {
+    height: 30px; min-height: 30px; padding-top: 0; padding-bottom: 0; align-items: center;
+  }
   /* 页头右侧操作聚拢成组贴右（th-info 撑开剩余空间，组内间距统一） */
   .th-actions { display: flex; align-items: center; gap: 8px; flex: none; }
   .th-info { min-width: 0; flex: 1 1 auto; overflow: hidden; }
   .th-info b { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; line-height: 1.35; }
   .th-info b.th-title { display: inline-flex; align-items: center; gap: 7px; }
   .th-title :global(svg) { flex: none; color: var(--dim); }
-  .th-info small { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; color: var(--dim); font-size: 12px; margin-top: 2px; }
+  .th-info small { display: block; min-width: 0; overflow: hidden; color: var(--dim); font-size: 12px; margin-top: 2px; text-overflow: ellipsis; white-space: nowrap; }
+  .th-info small :global(svg), .th-info small :global(img) { vertical-align: -2px; }
   .btag { display: inline-flex; align-items: center; gap: 4px; }
   .thread { flex: 1; overflow-y: auto; }
   .skill-head-actions { flex: none; display: flex; align-items: center; gap: 6px; }
