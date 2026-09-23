@@ -19,9 +19,8 @@
     onfast = (_v: boolean) => {},
   } = $props();
 
-  /** fast 模式只有这两档支持（CLI changelog 2.1.219：「/fast now applies to Opus 5 and Opus 4.8」，
-   *  Opus 4.7 已被移除）。不支持的模型不显示这一行 —— 摆一个点了没反应的开关最糟。 */
-  const FAST_OK = ['claude-opus-5', 'claude-opus-4-8'];
+  /** Supported Opus models: https://code.claude.com/docs/en/fast-mode */
+  const FAST_OK = ['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8'];
   const fastable = $derived(FAST_OK.some((m) => value.endsWith('::' + m) || value === m));
 
   type Stop = { v: string; l: string; d: string };
@@ -36,7 +35,8 @@
    * Claude Code: low / medium / high / xhigh / max
    * Grok CLI: none / minimal / low / medium / high / xhigh / max
    * Codex 常规模型: low / medium / high
-   * GPT-6 Astra（Codex 通道）: low / medium / high / xhigh / max / ultra
+   * GPT-6 Astra / Sol（Codex 通道）: low / medium / high / xhigh / max / ultra
+   * GPT-6 Luna（Codex 通道）: low / medium / high / xhigh / max
    */
   const CLAUDE_STOPS: Stop[] = [
     ...BASE_STOPS,
@@ -59,10 +59,14 @@
     { v: 'max', l: '最高', d: '最大推理' },
     { v: 'ultra', l: '极致', d: '自动委派 · 最深推理' },
   ];
+  // Codex subscription-channel capabilities (models_cache), not Responses API tiers.
+  const CODEX_LUNA_STOPS = CODEX_ASTRA_STOPS.filter((s) => s.v !== 'ultra');
   const brain = $derived(value.includes('::') ? value.slice(0, value.indexOf('::')) : '');
   const model = $derived(value.includes('::') ? value.slice(value.indexOf('::') + 2) : value);
   const brainName = $derived(brain === 'claude' ? 'Claude' : brain === 'grok' ? 'Grok' : brain === 'codex' ? 'Codex' : '模型');
-  const stops = $derived(brain === 'claude' ? CLAUDE_STOPS : brain === 'grok' ? GROK_STOPS : brain === 'codex' && model === 'gpt-6-astra' ? CODEX_ASTRA_STOPS : BASE_STOPS);
+  const stops = $derived(brain === 'claude' ? CLAUDE_STOPS : brain === 'grok' ? GROK_STOPS
+    : brain === 'codex' && (model === 'gpt-6-astra' || model === 'gpt-6-sol') ? CODEX_ASTRA_STOPS
+    : brain === 'codex' && model === 'gpt-6-luna' ? CODEX_LUNA_STOPS : BASE_STOPS);
 
   let open = $state(false);
   let root = $state<HTMLElement>();
@@ -71,7 +75,9 @@
   let menuStyle = $state('');
 
   const current = $derived(options.find((o) => o.value === value));
-  const idx = $derived(Math.max(0, stops.findIndex((s) => s.v === effort)));
+  // Match the backend's cap when a Sol/Astra conversation switches to Luna.
+  const effectiveEffort = $derived(brain === 'codex' && model === 'gpt-6-luna' && effort === 'ultra' ? 'max' : effort);
+  const idx = $derived(Math.max(0, stops.findIndex((s) => s.v === effectiveEffort)));
   /** 拖动中的原始位置（0-100）；null＝未在拖，显示已选档位 */
   let dragPct = $state<number | null>(null);
   const pct = $derived(dragPct ?? (idx / (stops.length - 1)) * 100);

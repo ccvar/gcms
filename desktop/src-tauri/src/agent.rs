@@ -1270,6 +1270,16 @@ fn validate_codex_model(model: &str) -> Result<Option<String>, String> {
     }
 }
 
+fn codex_effort<'a>(model: &str, effort: &'a str) -> &'a str {
+    // A conversation can retain Sol/Astra's effort when the user switches to Luna.
+    // Luna's highest subscription-channel tier is max, not ultra.
+    if model.trim() == "gpt-6-luna" && effort == "ultra" {
+        "max"
+    } else {
+        effort
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn try_run_codex_app_server(
     registry: RunRegistry,
@@ -1395,6 +1405,7 @@ async fn try_run_codex_app_server(
     if let Some(model) = model.as_ref() {
         params["model"] = serde_json::Value::String(model.clone());
     }
+    let effort = codex_effort(model.as_deref().unwrap_or_default(), effort);
     if matches!(
         effort,
         "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
@@ -2706,8 +2717,8 @@ fn build_codex(
         }
         cmd.args(["-c", &format!("model={model}")]);
     }
-    // 思考等级：常规模型由前端只提供 low/medium/high；GPT-6 Astra 还提供
-    // xhigh/max/ultra。这里只透传白名单值，空值仍跟随 Codex 默认。
+    // Normalize a retained higher tier when switching from Sol/Astra to Luna.
+    let effort = codex_effort(model, effort);
     if matches!(
         effort,
         "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
@@ -3601,6 +3612,35 @@ mod tests {
         assert_eq!(codex_sandbox(PermMode::Plan), "read-only");
         assert_eq!(codex_sandbox(PermMode::Auto), "workspace-write");
         assert_eq!(codex_sandbox(PermMode::Full), "danger-full-access");
+    }
+
+    #[test]
+    fn new_model_presets_are_passed_to_the_cli_without_aliasing() {
+        let conn: Connection = serde_json::from_value(json!({
+            "id": "test", "name": "test", "kind": "ssh", "api_base": "", "skill_dir": ".",
+            "key_prefix": "", "key_kind": "", "created_at": ""
+        })).unwrap();
+        for (model, effort) in [("gpt-6-sol", "ultra"), ("gpt-6-luna", "max"), ("gpt-6-luna", "ultra")] {
+            assert_eq!(validate_codex_model(model).unwrap(), Some(model.into()));
+            let (cmd, _) = build_codex(&conn, model, effort, "", true, None,
+                "test", "", ".", PermMode::Plan, None).unwrap();
+            let args: Vec<String> = cmd.as_std().get_args()
+                .map(|arg| arg.to_string_lossy().into_owned()).collect();
+            assert!(args.contains(&format!("model={model}")));
+            assert!(args.contains(&format!("model_reasoning_effort={}", codex_effort(model, effort))));
+        }
+        let root = std::env::temp_dir().join(format!("pilot-model-test-{}", uuid::Uuid::new_v4()));
+        let perm = PermSpec {
+            mode: PermMode::Plan, conv_id: "model-test".into(), gen_dir: root.join("hooks"),
+            pending_dir: root.join("pending"), ssh_js: root.join("ssh.js"), fast: false,
+        };
+        let (cmd, _, prompt_file) = build_claude(&conn, "claude-opus-5-5", "medium",
+            "75739ec2-daa6-44c0-930c-30309ca88e45", true, None, "test", "", ".", &perm, None, None).unwrap();
+        let args: Vec<String> = cmd.as_std().get_args()
+            .map(|arg| arg.to_string_lossy().into_owned()).collect();
+        assert!(args.windows(2).any(|pair| pair == ["--model", "claude-opus-5-5"]));
+        drop(prompt_file);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

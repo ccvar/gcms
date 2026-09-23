@@ -8619,6 +8619,8 @@ pub fn run() {
             skills::inspect_skill_package,
             skills::install_skill_package,
             skills::set_skill_enabled,
+            skills::remove_skill,
+            skills::skill_site_head,
             check_pack_update,
             gcms_control_unlock,
             gcms_public_access_check,

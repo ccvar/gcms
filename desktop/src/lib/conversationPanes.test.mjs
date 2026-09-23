@@ -10,11 +10,12 @@ const canvasSource=fs.readFileSync(new URL('./ConversationCanvas.svelte',import.
 const slice=(from,to)=>{const a=source.indexOf(from),b=source.indexOf(to,a);assert.ok(a>=0&&b>a);return source.slice(a,b);};
 const code=ts.transpileModule(slice('  function splitConversation(', '  // 会话可切换模型；'),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 function harness(){
-  const c=id=>({id,conn_id:`conn-${id}`,site_slug:`site-${id}`,model:'test',brain:'codex',messages:[],status:'idle'});
+  const c=id=>({id,conn_id:'conn-a',site_slug:`site-${id}`,model:'test',brain:'codex',messages:[],status:'idle'});
   const a=c('a'),b=c('b'),calls=[],results={};
   const ctx={splitSnapshots:{a,b},splitDrafts:{a:{text:'A draft',files:[],sticky:true},b:{text:'B draft',files:[],sticky:true}},splitErrors:{},splitQueued:{},convos:[a,b],activeConv:a,activeConvId:'a',threadModel:'test',threadPerm:'full',threadEffort:'',running:{},lives:{},autoRetried:{},retryExhausted:{},ATT_MARKER:'ATTACHMENTS',
     conversationLayout:splitPane(pane('a','pa'),'pa','b','right'),splitFocused:'pa',leaves,pane,removePane,replacePane,splitPane,
     $state:v=>v,tick:()=>Promise.resolve(),
+    conversationLayoutWorkspace:'conn-a',openConvSeq:0,cancelConversationPointerDrag:()=>{},threadEl:null,threadStickBottom:true,
     optimisticUser:text=>({role:'user',text}),makeChannel:id=>({id}),
     beginTurn:(id,c)=>{ctx.running[id]=c.conn_id;ctx.lives[id]={startedAt:42};ctx.splitSnapshots[id]=c;},
     endTurn:(c,id)=>{ctx.splitSnapshots[id]=c;delete ctx.running[id];delete ctx.lives[id];},
@@ -140,4 +141,86 @@ test('settings replies update the originating conversation after focus changes',
   finish({...ctx.splitSnapshots.a,effort:'high'});await setting;
   assert.equal(calls[0].args.convId,'a');assert.equal(ctx.splitSnapshots.a.effort,'high');
   assert.equal(ctx.activeConv.id,'b');assert.equal(ctx.splitSnapshots.b.effort,undefined);
+});
+
+test('workspace switch removes every old pane without canceling work or losing pane drafts',()=>{
+  const {ctx,calls}=harness();ctx.running.a='conn-a';
+  ctx.splitQueued.a={text:'next',files:[],startedAt:42};
+  ctx.switchConversationWorkspace('__skills__');
+  assert.equal(ctx.conversationLayout,null);assert.equal(ctx.splitFocused,'');
+  assert.equal(ctx.activeConv,null);assert.equal(ctx.activeConvId,'');
+  assert.equal(ctx.conversationLayoutWorkspace,'__skills__');
+  assert.equal(ctx.splitDrafts.a.text,'A draft');assert.equal(ctx.splitQueued.a.text,'next');
+  assert.equal(ctx.running.a,'conn-a');assert.equal(calls.length,0);
+});
+
+test('same workspace refresh preserves its split layout and focus',()=>{
+  const {ctx}=harness();const before=ctx.conversationLayout;
+  ctx.switchConversationWorkspace('conn-a');
+  assert.equal(ctx.conversationLayout,before);assert.equal(ctx.activeConvId,'a');
+});
+
+test('connection workspaces are isolated from one another as well as skills',()=>{
+  const {ctx}=harness();ctx.switchConversationWorkspace('conn-b');
+  assert.equal(ctx.conversationLayout,null);assert.equal(ctx.conversationLayoutWorkspace,'conn-b');
+  assert.equal(ctx.conversationWorkspace({conn_id:'conn-a',task_type:'workspace'}),'conn-a');
+  assert.equal(ctx.conversationWorkspace({conn_id:'old-connection',task_type:'skill'}),'__skills__');
+});
+
+test('cross-workspace drag is rejected before fetching the conversation',async()=>{
+  const {ctx,calls}=harness();ctx.splitSnapshots.b={...ctx.splitSnapshots.b,conn_id:'__skills__',task_type:'skill'};
+  await ctx.addSplit('b','right','pa');
+  assert.equal(calls.length,0);assert.equal(ctx.activeConvId,'a');
+});
+
+test('a delayed drop cannot recreate old panes after switching workspace',async()=>{
+  const {ctx}=harness();let finish;
+  ctx.invoke=()=>new Promise(resolve=>finish=resolve);
+  const pending=ctx.addSplit('b','right','pa');
+  ctx.switchConversationWorkspace('__skills__');finish(ctx.splitSnapshots.b);await pending;
+  assert.equal(ctx.conversationLayout,null);assert.equal(ctx.activeConvId,'');
+});
+
+function navigationHarness(){
+  const h=harness(),{ctx}=h;
+  Object.assign(ctx,{activeConnId:'conn-a',inSkillWorkspace:false,expandSite:()=>{},
+    conversationGroupKey:c=>c.site_slug,scrollSoon:()=>{},checkCfReady:()=>{},
+    selectConn:async id=>{ctx.switchConversationWorkspace(id);ctx.activeConnId=id;},
+    crypto:globalThis.crypto});
+  vm.runInContext(ts.transpileModule(slice('  async function openConv(', '  function gscHasScope('),
+    {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,ctx);
+  return h;
+}
+
+test('opening a skill from search resets the old layout before the split fast path',async()=>{
+  const {ctx}=navigationHarness();
+  ctx.invoke=async()=>({id:'skill-c',conn_id:'__skills__',task_type:'skill',model:'test',skill_ids:['skill']});
+  await ctx.openConv('skill-c');ctx.ensureConversationPane();
+  assert.deepEqual(leaves(ctx.conversationLayout).map(p=>p.conversation),['skill-c']);
+  assert.equal(ctx.conversationLayoutWorkspace,'__skills__');
+});
+
+test('a late open response cannot steal focus after a workspace switch',async()=>{
+  const {ctx}=navigationHarness();let finish;
+  ctx.invoke=()=>new Promise(resolve=>finish=resolve);
+  const pending=ctx.openConv('b');ctx.switchConversationWorkspace('__skills__');
+  finish(ctx.splitSnapshots.b);await pending;
+  assert.equal(ctx.activeConvId,'');assert.equal(ctx.conversationLayout,null);
+});
+
+test('returning to a connection opens only that connection and restores its draft',async()=>{
+  const {ctx}=navigationHarness();ctx.switchConversationWorkspace('__skills__');
+  ctx.inSkillWorkspace=true;ctx.invoke=async()=>ctx.splitSnapshots.a;
+  await ctx.openConv('a');ctx.ensureConversationPane();
+  assert.equal(ctx.conversationLayoutWorkspace,'conn-a');
+  assert.deepEqual(leaves(ctx.conversationLayout).map(p=>p.conversation),['a']);
+  assert.equal(ctx.draft,'A draft');
+});
+
+test('workspace entry points all reset the conversation layout scope',()=>{
+  assert.match(slice('  async function selectConn(', '  // 历史建站会话'),/switchConversationWorkspace\(id\)/);
+  for(const [start,end] of [['  function openSkills(', '  function openSkillLibrary('],
+    ['  function openSkillLibrary(', '  function newSkillChat('],['  function newSkillChat(', '  function closeSkillImport(']]) {
+    assert.match(slice(start,end),/switchConversationWorkspace\(SKILLS_CONN_ID\)/);
+  }
 });

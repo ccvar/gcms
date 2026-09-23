@@ -16,6 +16,7 @@ const MAX_ARCHIVE_SIZE: u64 = 64 * 1024 * 1024;
 const MAX_FILE_SIZE: u64 = 16 * 1024 * 1024;
 const MAX_TOTAL_SIZE: u64 = 64 * 1024 * 1024;
 const MAX_SKILL_MD_SIZE: u64 = 1024 * 1024;
+static SKILL_MUTATIONS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Skill {
@@ -142,6 +143,19 @@ impl SkillStore {
                 skill.site_domain = infer_site_domain(&skill.description)
                     .or_else(|| infer_site_domain(&skill.name))
                     .unwrap_or_default();
+                if skill.site_domain.is_empty() && valid_skill_id(&skill.id) {
+                    let path = self.root.join(&skill.id).join("SKILL.md");
+                    // Only read the managed copy, never a path supplied by imported metadata.
+                    if let (Ok(root), Ok(path)) = (self.root.canonicalize(), path.canonicalize()) {
+                        if path.starts_with(root) && fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= MAX_SKILL_MD_SIZE) {
+                            if let Ok(source) = fs::read_to_string(path) {
+                                if let Ok(metadata) = parse_frontmatter(&source) {
+                                    skill.site_domain = package_site_domain(&metadata, &source).unwrap_or_default();
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         Ok(skills)
@@ -181,7 +195,7 @@ impl SkillStore {
             return Err("SKILL.md frontmatter 缺少 name".into());
         }
         let id = skill_id(&frontmatter)?;
-        let site_domain = skill_site_domain(&frontmatter)?;
+        let site_domain = package_site_domain(&frontmatter, &source)?;
         let version = if frontmatter.version.trim().is_empty() {
             let pack_path = inspected.skill_root.join("PACK_VERSION");
             match inspected
@@ -250,7 +264,7 @@ impl SkillStore {
             return Err("SKILL.md frontmatter 缺少 name".into());
         }
         let id = skill_id(&frontmatter)?;
-        let site_domain = skill_site_domain(&frontmatter)?;
+        let site_domain = package_site_domain(&frontmatter, &source)?;
         let version = if frontmatter.version.trim().is_empty() {
             read_pack_version(source_path)?
         } else {
@@ -287,6 +301,7 @@ impl SkillStore {
         source_path: &Path,
         expected_sha256: &str,
     ) -> Result<SkillInstallOutcome, String> {
+        let _guard = SKILL_MUTATIONS.lock().map_err(|_| "技能存储正在恢复，请重试".to_string())?;
         validate_sha256(expected_sha256)?;
         let package = self.inspect_package(source_path)?;
         let actual_sha256 = package.sha256.clone();
@@ -357,7 +372,7 @@ impl SkillStore {
                 return Err("SKILL.md frontmatter 缺少 name".into());
             }
             let id = skill_id(&frontmatter)?;
-            let site_domain = skill_site_domain(&frontmatter)?;
+            let site_domain = package_site_domain(&frontmatter, &source)?;
             let version = if frontmatter.version.trim().is_empty() {
                 read_pack_version(&stage)?
             } else {
@@ -425,6 +440,7 @@ impl SkillStore {
     }
 
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<Skill, String> {
+        let _guard = SKILL_MUTATIONS.lock().map_err(|_| "技能存储正在恢复，请重试".to_string())?;
         let mut skills = self.list()?;
         let skill = skills
             .iter_mut()
@@ -434,6 +450,24 @@ impl SkillStore {
         let out = skill.clone();
         self.save(&skills)?;
         Ok(out)
+    }
+
+    pub fn remove(&self, id: &str) -> Result<(), String> {
+        let _guard = SKILL_MUTATIONS.lock().map_err(|_| "技能存储正在恢复，请重试".to_string())?;
+        if !valid_skill_id(id) { return Err("技能 ID 无效".into()); }
+        let mut skills = self.list()?;
+        if !skills.iter().any(|skill| skill.id == id) { return Err("技能已移除或不存在".into()); }
+        let installed = self.root.join(id);
+        // Retain a recoverable managed copy; never remove the user's source package or history.
+        let backup = self.root.join(format!(".removed-{id}-{}", uuid::Uuid::new_v4()));
+        let moved = path_exists(&installed)?;
+        if moved { fs::rename(&installed, &backup).map_err(|e| format!("暂存技能失败：{e}"))?; }
+        skills.retain(|skill| skill.id != id);
+        if let Err(error) = self.save(&skills) {
+            if moved { fs::rename(&backup, &installed).map_err(|e| format!("{error}；恢复技能失败：{e}"))?; }
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// 供每轮运行时做渐进披露。这里只列出已启用技能的名称、用途和入口路径；
@@ -528,6 +562,45 @@ pub(crate) fn list_skills(app: AppHandle) -> Result<Vec<Skill>, String> {
         .app_data_dir()
         .map_err(|error| format!("获取 Pilot 数据目录失败：{error}"))?;
     SkillStore::new(&data_dir)?.list()
+}
+
+#[tauri::command]
+pub(crate) fn remove_skill(state: tauri::State<'_, crate::AppState>, skill_id: String) -> Result<(), String> {
+    if state.convos.list().iter().any(|c| c.status == "running" && c.task_type == "skill"
+        && (c.skill_ids.contains(&skill_id) || c.site_slug == skill_id)) {
+        return Err("这个技能的对话正在运行，请先停止或等待完成再移除".into());
+    }
+    SkillStore::new(&state.data_dir)?.remove(&skill_id)
+}
+
+/// Read only the public home page's head. No credentials, script execution or third-party icon service.
+#[tauri::command]
+pub(crate) async fn skill_site_head(app: AppHandle, domain: String) -> Result<String, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !valid_site_domain(&domain) || !SkillStore::new(&data_dir)?.list()?.iter().any(|s| s.site_domain == domain) {
+        return Err("未安装该站点的技能".into());
+    }
+    let allowed = domain.clone();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            let url = attempt.url();
+            if attempt.previous().len() < 3 && url.scheme() == "https"
+                && url.host_str().is_some_and(|host| host == allowed || host == format!("www.{allowed}")) {
+                attempt.follow()
+            } else { attempt.stop() }
+        }))
+        .build().map_err(|e| e.to_string())?;
+    let mut response = client.get(format!("https://{domain}/")).send().await
+        .map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if bytes.len() + chunk.len() > 1024 * 1024 { return Err("网页头部过大".into()); }
+        bytes.extend_from_slice(&chunk);
+        let text = String::from_utf8_lossy(&bytes);
+        if let Some(end) = text.to_ascii_lowercase().find("</head>") { return Ok(text[..end + 7].to_string()); }
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 #[tauri::command]
@@ -1103,6 +1176,20 @@ fn skill_site_domain(metadata: &SkillFrontmatter) -> Result<String, String> {
         .unwrap_or_default())
 }
 
+fn package_site_domain(metadata: &SkillFrontmatter, source: &str) -> Result<String, String> {
+    let declared = skill_site_domain(metadata)?;
+    if !declared.is_empty() { return Ok(declared); }
+    // A site's name must match an actual domain in the document. Never invent name.com
+    // or select an unrelated documentation/API host simply because it appears first.
+    let name = metadata.name.to_ascii_lowercase();
+    let brand = name.split(['-', '_']).next().unwrap_or_default();
+    let candidates: HashSet<String> = source.split(|c: char| c.is_whitespace() || matches!(c, '`' | '"' | '\'' | '(' | ')' | '<' | '>' | '[' | ']'))
+        .filter_map(normalize_domain_candidate)
+        .filter(|host| host.split('.').next() == Some(brand))
+        .collect();
+    Ok(if candidates.len() == 1 { candidates.into_iter().next().unwrap() } else { String::new() })
+}
+
 fn infer_site_domain(value: &str) -> Option<String> {
     value
         .split_whitespace()
@@ -1657,6 +1744,57 @@ mod tests {
         };
         assert_eq!(skill_site_domain(&explicit).unwrap(), "example.com");
         assert_eq!(infer_site_domain("Read SKILL.md and config.json"), None);
+    }
+
+    #[test]
+    fn domain_from_body_requires_unambiguous_matching_site() {
+        let metadata = SkillFrontmatter { name: "blockvar-content".into(), ..Default::default() };
+        assert_eq!(package_site_domain(&metadata, "Docs https://example.com; use `https://blockvar.com/admin`.").unwrap(), "blockvar.com");
+        assert_eq!(package_site_domain(&metadata, "[Site](https://www.blockvar.com/admin)").unwrap(), "blockvar.com");
+        assert_eq!(package_site_domain(&metadata, "https://other.com https://blockvar.net https://blockvar.com").unwrap(), "");
+        assert_eq!(package_site_domain(&metadata, "https://docs.example.com config/site.json").unwrap(), "");
+    }
+
+    #[test]
+    fn legacy_body_backfill_and_removal_preserve_source_and_archive() {
+        let base = temp_dir("remove-managed");
+        let source = base.join("original");
+        fs::create_dir_all(&source).unwrap();
+        let text = "---\nname: blockvar-content\ndescription: Manage BlockVar content\n---\nUse `https://blockvar.com/admin`.";
+        fs::write(source.join("SKILL.md"), text).unwrap();
+        let store = SkillStore::new(&base).unwrap();
+        let inspection = store.inspect_package(&source).unwrap();
+        assert_eq!(inspection.site_domain, "blockvar.com");
+        let mut skill = store.install_package(&source, &inspection.sha256).unwrap().skill;
+        assert_eq!(skill.site_domain, "blockvar.com");
+        skill.site_domain.clear();
+        store.save(&[skill.clone()]).unwrap();
+        assert_eq!(store.list().unwrap()[0].site_domain, "blockvar.com");
+        store.remove(&skill.id).unwrap();
+        assert!(store.list().unwrap().is_empty());
+        assert!(!Path::new(&skill.install_dir).exists());
+        assert_eq!(fs::read_to_string(source.join("SKILL.md")).unwrap(), text);
+        let archived = fs::read_dir(&store.root).unwrap().filter_map(Result::ok)
+            .find(|e| e.file_name().to_string_lossy().starts_with(".removed-")).unwrap();
+        assert_eq!(fs::read_to_string(archived.path().join("SKILL.md")).unwrap(), text);
+        assert!(store.remove("../../original").is_err());
+        assert!(store.remove(&skill.id).is_err());
+        store.install_package(&source, &inspection.sha256).unwrap();
+        assert_eq!(store.list().unwrap().len(), 1);
+        remove_path(&base).unwrap();
+    }
+
+    #[test]
+    fn remove_does_not_move_files_when_registry_is_unreadable() {
+        let base = temp_dir("remove-rollback");
+        let store = SkillStore::new(&base).unwrap();
+        let id = "test-skill";
+        fs::create_dir_all(store.root.join(id)).unwrap();
+        // No directory may be moved before the registry has been validated.
+        fs::write(&store.file, "invalid json").unwrap();
+        assert!(store.remove(id).is_err());
+        assert!(store.root.join(id).is_dir());
+        remove_path(&base).unwrap();
     }
 
     #[test]

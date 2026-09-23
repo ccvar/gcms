@@ -4473,6 +4473,8 @@
   // Layout stores only conversation references. Execution and drafts remain keyed by conversation,
   // so moving/closing a pane never cancels a turn or redirects an in-flight operation.
   let conversationLayout = $state<Layout | null>(null);
+  let conversationLayoutWorkspace = $state('');
+  let openConvSeq = 0;
   let splitFocused = $state('');
   type PaneDraft = {text:string;files:Attach[];scroll:number;sticky:boolean};
   let splitDragId = $state('');
@@ -4488,6 +4490,30 @@
   const splitVisible = $derived.by(()=>!!conversationLayout && view === 'thread'
     && leaves(conversationLayout).some(p=>p.conversation===activeConvId));
   function splitConversation(id:string):Conversation | null { return splitSnapshots[id] ?? convos.find(c=>c.id===id) ?? null; }
+  function conversationWorkspace(c:Conversation):string {
+    return c.task_type==='skill' || c.conn_id==='__skills__' ? '__skills__' : c.conn_id;
+  }
+  function resetConversationLayout(workspace:string) {
+    if(conversationLayoutWorkspace===workspace)return;
+    ++openConvSeq; // Invalidate pending opens from the workspace being left.
+    cancelConversationPointerDrag();
+    endConversationDrag();
+    conversationLayout=null;
+    splitFocused='';
+    conversationLayoutWorkspace=workspace;
+  }
+  function switchConversationWorkspace(workspace:string) {
+    if(conversationLayoutWorkspace===workspace)return;
+    // Keep drafts/queued turns bound to their conversation, never the next workspace.
+    if(activeConv && !splitVisible) {
+      splitDrafts[activeConv.id]={text:draft,files:attachments,scroll:threadEl?.scrollTop??0,sticky:threadStickBottom};
+      if(queued?.convId===activeConv.id) {
+        splitQueued[activeConv.id]={text:queued.text,files:queued.atts,startedAt:queued.turnStartedAt};
+      }
+    }
+    resetConversationLayout(workspace);
+    activeConv=null;activeConvId='';draft='';attachments=[];queued=null;
+  }
   const paneInputs = new Map<string,HTMLTextAreaElement>();
   const paneScrollers = new Map<string,HTMLDivElement>();
   let paneSites = $state<Record<string,Site[]>>({});
@@ -4562,7 +4588,7 @@
   function focusSplit(id:string) {
     const leaf=leaves(conversationLayout).find(p=>p.id===id);
     const c=leaf && splitConversation(leaf.conversation);
-    if(!c)return;
+    if(!c || conversationWorkspace(c)!==conversationLayoutWorkspace)return;
     if(splitFocused===id && activeConvId===c.id)return;
     splitFocused=id;
     activeConvId=c.id; activeConv=c;threadModel=c.model;threadPerm=c.perm_mode||'full';threadEffort=c.effort||'';
@@ -4572,8 +4598,11 @@
   }
   function ensureConversationPane() {
     if(!activeConv)return;
+    resetConversationLayout(conversationWorkspace(activeConv));
+    const savedDraft=splitDrafts[activeConv.id];
     rememberSplit(activeConv);
-    splitDrafts[activeConv.id]={text:draft,files:attachments,scroll:threadEl?.scrollTop??0,sticky:threadStickBottom};
+    splitDrafts[activeConv.id]=savedDraft??{text:draft,files:attachments,scroll:threadEl?.scrollTop??0,sticky:threadStickBottom};
+    draft=splitDrafts[activeConv.id].text;
     if(queued?.convId===activeConv.id) {
       splitQueued[activeConv.id]={text:queued.text,files:queued.atts,startedAt:queued.turnStartedAt}; queued=null;
     }
@@ -4647,9 +4676,12 @@
   async function addSplit(id:string,edge:Edge,target?:string) {
     if(!convos.some(c=>c.id===id)&&!splitSnapshots[id])return;
     const existing=splitConversation(id);
+    const workspace=conversationLayoutWorkspace, navigation=openConvSeq;
+    if(!existing || conversationWorkspace(existing)!==workspace)return;
     try {
       const c=running[id]&&existing ? existing : await invoke<Conversation|null>('get_conversation',{id});
-      if(!c)return;
+      if(!c || navigation!==openConvSeq || workspace!==conversationLayoutWorkspace
+        || conversationWorkspace(c)!==workspace)return;
       if(!splitVisible)ensureConversationPane();
       if(!conversationLayout)return;
       const leaf=target??splitFocused;
@@ -6095,10 +6127,10 @@
   let lModel = $state(prefs.model);
   let lPerm = $state<string>(prefs.taskType === 'sitebuild' && (prefs.perm ?? 'full') === 'full' ? 'auto' : (prefs.perm ?? 'full'));
   let lEffort = $state<string>(prefs.effort ?? '');
-  /** fast 模式。只有 Opus 5 / Opus 4.8 支持 —— 换到别的模型必须自动落下，
+  /** fast 模式。只有 Opus 5.5 / Opus 5 / Opus 4.8 支持 —— 换到别的模型必须自动落下，
    *  否则会留下一个「显示开着、对该模型其实无效」的状态，比关着更误导。 */
   let lFast = $state<boolean>(prefs.fast ?? false);
-  const FAST_MODELS = ['claude-opus-5', 'claude-opus-4-8'];
+  const FAST_MODELS = ['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8'];
   const fastable = (m: string) => FAST_MODELS.includes(m);
   $effect(() => { if (lFast && !fastable(lModel)) { lFast = false; prefs.fast = false; savePrefs(prefs); } });
   function setFast(v: boolean) { lFast = v; prefs.fast = v; savePrefs(prefs); }
@@ -8095,6 +8127,7 @@
     const switching = id !== activeConnId;
     const leavingSkillWorkspace = inSkillWorkspace;
     const conn = conns.find((c) => c.id === id);
+    switchConversationWorkspace(id);
     const seq = ++selSeq; activeConnId = id; discovery = null;
     void maybeCheckPackUpdate(id); // 静默查技能包更新（24h 节流，不阻塞选择）
     if (switching || leavingSkillWorkspace) {
@@ -8364,6 +8397,8 @@
     }
   }
   function openSkills() {
+    switchConversationWorkspace(SKILLS_CONN_ID);
+    ++openConvSeq;
     switcherOpen = false;
     setupAddOpen = false;
     setupOpen = false;
@@ -8375,12 +8410,16 @@
     void loadSkills();
   }
   function openSkillLibrary() {
+    switchConversationWorkspace(SKILLS_CONN_ID);
+    ++openConvSeq;
     switcherOpen = false;
     skillFilter = 'all';
     view = 'skills';
     void loadSkills();
   }
   function newSkillChat() {
+    switchConversationWorkspace(SKILLS_CONN_ID);
+    ++openConvSeq;
     activeConvId = '';
     activeConv = null;
     lSkillId = '';
@@ -8483,6 +8522,23 @@
       const next = { ...skillToggleBusy };
       delete next[skill.id];
       skillToggleBusy = next;
+    }
+  }
+
+  async function removeInstalledSkill(skill: InstalledSkill) {
+    if (skillToggleBusy[skill.id]) return;
+    skillToggleBusy = { ...skillToggleBusy, [skill.id]: true };
+    try {
+      const yes = await confirmDialog(`移除「${skill.name}」？原始技能包和对话记录会保留，Pilot 中的副本会归档。相关对话需要重新导入这个技能后才能继续。`,
+        { title: '移除技能', kind: 'danger', confirmText: '移除' });
+      if (!yes) return;
+      await invoke('remove_skill', { skillId: skill.id });
+      installedSkills = installedSkills.filter(item => item.id !== skill.id);
+      if (lSkillId === skill.id) lSkillId = '';
+      say(`「${skill.name}」已移除，原始文件和对话记录已保留`);
+    } catch (e) { say(String(e), 'err'); }
+    finally {
+      const next = { ...skillToggleBusy }; delete next[skill.id]; skillToggleBusy = next;
     }
   }
 
@@ -10050,11 +10106,56 @@
   function duplicateSftpEntry(r: SftpRow) {
     return pasteSftpEntry(sftpPath, { connId: sftpConnId, path: r.path, name: r.name, dir: r.dir && !r.link });
   }
-  // 新建文件夹 / 文件 / 重命名共用一个「起名」弹窗，固定连接与目标目录。
-  let fsAsk = $state<null | { mode: 'mkdir' | 'create' | 'rename'; connId: string; dir: string; from: string; value: string; busy: boolean; err: string }>(null);
+  // 新建文件夹 / 文件使用弹窗；重命名单独在列表中原地编辑。
+  let fsAsk = $state<null | { mode: 'mkdir' | 'create'; connId: string; dir: string; from: string; value: string; busy: boolean; err: string }>(null);
   function openMkdir(dir = sftpPath) { fsAsk = { mode: 'mkdir', connId: sftpConnId, dir, from: '', value: '', busy: false, err: '' }; }
   function openNewFile(dir = sftpPath) { fsAsk = { mode: 'create', connId: sftpConnId, dir, from: '', value: '', busy: false, err: '' }; }
-  function openRename(r: SftpRow) { fsAsk = { mode: 'rename', connId: sftpConnId, dir: parentOf(r.path), from: r.name, value: r.name, busy: false, err: '' }; }
+  let fileRename = $state<null | { connId: string; path: string; name: string; directory: boolean; value: string; busy: boolean; err: string }>(null);
+  function openRename(r: SftpRow) {
+    fctxMenu = null;
+    if (fileRename?.busy || isSftpDeleting(r.path)) return;
+    sftpSel = r.path;
+    fileRename = { connId: sftpConnId, path: r.path, name: r.name, directory: r.dir, value: r.name, busy: false, err: '' };
+  }
+  function focusFileRename(node: HTMLInputElement) {
+    // Wait until bind:value has populated the input before selecting the stem.
+    queueMicrotask(() => {
+      if (!node.isConnected) return;
+      node.focus();
+      const dot = node.value.lastIndexOf('.');
+      node.setSelectionRange(0, !fileRename?.directory && dot > 0 ? dot : node.value.length);
+    });
+  }
+  async function saveFileRename() {
+    const edit = fileRename;
+    if (!edit || edit.busy || edit.connId !== sftpConnId) return;
+    const name = edit.value.trim();
+    if (!name || name === '.' || name === '..' || /[/\0]/.test(name)) {
+      edit.err = '名字不能为空，也不能包含 /、空字符或使用 .、..'; return;
+    }
+    if (name === edit.name) { fileRename = null; return; }
+    edit.busy = true; edit.err = '';
+    const dir = parentOf(edit.path);
+    const target = sftpJoin(dir, name);
+    try {
+      const entries = await invoke<SftpEntry[]>('sftp_list', { connId: edit.connId, path: dir });
+      if (entries.some(entry => entry.name === name)) throw new Error('同名文件或文件夹已存在，请换一个名字');
+      await invoke('sftp_rename', { connId: edit.connId, from: edit.path, to: target });
+      if (fileRename === edit) fileRename = null;
+      if (sftpConnId === edit.connId) {
+        if (sftpSel === edit.path) sftpSel = target;
+        const prefix = `${edit.path}/`;
+        sftpOpenDirs = new Set([...sftpOpenDirs].filter(path => path !== edit.path && !path.startsWith(prefix)));
+        await loadDir(dir, true);
+      }
+    } catch (e) {
+      if (fileRename === edit) { edit.err = String(e); edit.busy = false; }
+      else say(String(e), 'err');
+    }
+  }
+  $effect(() => {
+    if (fileRename && fileRename.connId !== sftpConnId) fileRename = null;
+  });
   async function confirmFsAsk() {
     if (!fsAsk || fsAsk.busy) return;
     const v = fsAsk.value.trim();
@@ -10065,21 +10166,20 @@
     const connId = fsAsk.connId;
     try {
       if (fsAsk.mode === 'mkdir') await invoke('sftp_mkdir', { connId, path: sftpJoin(dir, v) });
-      else if (fsAsk.mode === 'create') await invoke('sftp_create_file', { connId, path: sftpJoin(dir, v) });
-      else await invoke('sftp_rename', { connId, from: sftpJoin(dir, fsAsk.from), to: sftpJoin(dir, v) });
+      else await invoke('sftp_create_file', { connId, path: sftpJoin(dir, v) });
       fsAsk = null;
       if (sftpConnId === connId) await loadDir(dir, true);
     } catch (e) { if (fsAsk) { fsAsk.err = String(e); fsAsk.busy = false; } }
   }
   async function sftpDelete(r: SftpRow) {
     if (isSftpDeleting(r.path)) return;
+    const connId = sftpConnId;
     const isDir = r.dir && !r.link;
     const yes = await confirmDialog(
       isDir ? `删除文件夹「${r.name}」及其中的全部内容？此操作不可撤销。` : `删除「${r.name}」？此操作不可撤销。`,
       { title: isDir ? '删除文件夹' : '删除文件', kind: 'danger', confirmText: isDir ? '删除全部' : '删除' },
     );
     if (!yes) return;
-    const connId = sftpConnId;
     const key = sftpDeletingKey(connId, r.path);
     sftpDeleting = new Set(sftpDeleting).add(key);
     try {
@@ -10756,6 +10856,7 @@
 
   // ---------- 对话导航 ----------
   function newChat() {
+    ++openConvSeq;
     activeConvId = ''; activeConv = null; lDraft = '';
     draft='';attachments=[];
     // 远程连接没有启动页：新对话＝把底部对话面板腾空（工作台留在原地，终端不断）。
@@ -10769,14 +10870,26 @@
     if (!brainUsable(lBrain)) lBrain = firstUsableBrain();
   }
   async function openConv(id: string) {
+    const request=++openConvSeq;
     const c = await invoke<Conversation | null>('get_conversation', { id });
+    if(request!==openConvSeq)return;
     if (!c) { await refreshConvos(); return; }
+    // Resolve the workspace BEFORE taking the split-pane fast path. Otherwise an old
+    // pane survives when a skill/search result opens in a different workspace.
+    switchConversationWorkspace(conversationWorkspace(c));
+    if(c.task_type!=='skill' && c.conn_id!=='__skills__'
+      && (c.conn_id!==activeConnId || inSkillWorkspace)) {
+      void selectConn(c.conn_id,c);
+    }
     if (conversationLayout) {
       rememberSplit(running[id] ? splitConversation(id) ?? c : c);
       void loadPaneMetadata(c);
       const existing=leaves(conversationLayout).find(p=>p.conversation===id);
       if(existing)focusSplit(existing.id);
-      else {conversationLayout=replacePane(conversationLayout,splitFocused,id);focusSplit(splitFocused);}
+      else {
+        const target=leaves(conversationLayout).find(p=>p.id===splitFocused)??leaves(conversationLayout)[0];
+        conversationLayout=replacePane(conversationLayout,target.id,id);focusSplit(target.id);
+      }
       view='thread';
       return;
     }
@@ -12665,6 +12778,7 @@
     // ★ 必须用显式 ID，不能用别名 'sonnet'：别名由 CLI 解析，2.1.96 把它解析成
     //   claude-sonnet-4-6 —— 标签写着 Sonnet 5、实际跑的是 4.6（用户实测抓到）。
     { value: 'claude-sonnet-5', label: 'Sonnet', sub: '性价比 · Sonnet 5 · 1M 上下文' },
+    { value: 'claude-opus-5-5', label: 'Opus 5.5', sub: '最新 Opus · 1M 上下文' },
     { value: 'claude-opus-5', label: 'Opus 5', sub: '主力 · Opus 5 · 1M 上下文' },
     { value: 'claude-opus-4-8', label: 'Opus 4.8', sub: '上一代 Opus · 1M 上下文' },
     { value: 'claude-fable-5-1', label: 'Fable 5.1', sub: '旗舰 · 最新 Fable · 1M 上下文' },
@@ -12678,6 +12792,8 @@
     // 菜单展示官方模型容量；不要把 Codex 缓存默认窗口当成模型上限。
     // https://developers.openai.com/api/docs/models/gpt-6-astra
     { value: 'gpt-6-astra', label: 'GPT-6 Astra', sub: '最新旗舰 · 1.05M 模型上下文' },
+    { value: 'gpt-6-sol', label: 'GPT-6 Sol', sub: '编程与复杂任务 · 1.05M 模型上下文' },
+    { value: 'gpt-6-luna', label: 'GPT-6 Luna', sub: '快速轻量 · 1.05M 模型上下文' },
     // GPT-5.6 三分档（2026-07 GA）：裸 "gpt-5.6" 在 ChatGPT 订阅通道会被拒，必须用分档 ID；
     // 且要求 codex CLI ≥0.144（旧版报「requires a newer version of Codex」，升级 CLI 即可）。
     { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', sub: '最强 · 细节打磨' },
@@ -12687,11 +12803,12 @@
     { value: 'gpt-5.4', label: 'GPT-5.4', sub: '上一代' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini', sub: '上一代 · 最省' },
   ];
-  // Grok（订阅通道）模型取自登录后的 `grok models` 实测清单；首项「跟随默认」
+  // Grok（订阅通道）使用官方模型 ID；首项「跟随默认」
   // 不传 --model，厂商换默认时自动跟随。显式档位方便会话固定模型与回退上一代。
   const GROK_MODELS = [
-    { value: '', label: '跟随 Grok 默认', sub: '当前 Grok 4.6' },
-    { value: 'grok-4.6', label: 'Grok 4.6', sub: '最新 · 500k 上下文' },
+    { value: '', label: '跟随 Grok 默认', sub: '使用 CLI 当前默认模型' },
+    { value: 'grok-4.7', label: 'Grok 4.7', sub: '最新 · 500k 上下文' },
+    { value: 'grok-4.6', label: 'Grok 4.6', sub: '上一代 · 500k 上下文' },
     { value: 'grok-4.5', label: 'Grok 4.5', sub: '上一代 · 500k 上下文' },
   ];
   function modelOptsFor(b: string) { return b === 'codex' ? CODEX_MODELS : b === 'grok' ? GROK_MODELS : CLAUDE_MODELS; }
@@ -13080,27 +13197,29 @@
                   <span class="skill-card-icon" aria-hidden="true"><SkillFav domain={skill.site_domain} size={20} /></span>
                   <span class="skill-card-copy">
                     <span class="skill-card-title">
-                      <b>{skill.name}</b>
+                      <b title={skill.name}>{skill.name}</b>
                       {#if skill.site_domain}<span class="skill-domain">{skill.site_domain}</span>{/if}
-                      <em>{skillVersion(skill.version)}</em>
                     </span>
-                    <span class="skill-card-description">{skill.description || '这个技能没有提供说明。'}</span>
+                    <span class="skill-card-description" title={skill.description}>{skill.description || '这个技能没有提供说明。'}</span>
                     <span class="skill-card-meta">
-                      <span>{skill.has_scripts ? '包含可执行脚本' : '指令与参考资料'}</span><i>·</i><code title={skill.sha256}>{compactDigest(skill.sha256)}</code>
+                      {#if skill.has_scripts}<em class="skill-risk">含脚本</em>{:else}<span>指令与参考资料</span>{/if}
+                      {#if skill.version}<i>·</i><span>{skillVersion(skill.version)}</span>{/if}
+                      {#if skill.sha256}<i>·</i><code title={`校验摘要：${skill.sha256}`}>{compactDigest(skill.sha256)}</code>{/if}
                     </span>
                   </span>
-                  <span class="skill-card-control">
-                    {#if skill.has_scripts}<em class="skill-risk">含脚本</em>{/if}
-                    <span class="skill-enabled-label">{skillToggleBusy[skill.id] ? '处理中…' : skill.enabled ? '已启用' : '已停用'}</span>
+                  <span class="skill-card-control" aria-busy={!!skillToggleBusy[skill.id]}>
                     <button
                       type="button"
                       class="switch {skill.enabled ? 'on' : ''}"
                       role="switch"
                       aria-checked={skill.enabled}
                       aria-label={`${skill.enabled ? '停用' : '启用'}${skill.name}`}
+                      title={skillToggleBusy[skill.id] ? '处理中…' : skill.enabled ? '已启用，点击停用' : '已停用，点击启用'}
                       disabled={!!skillToggleBusy[skill.id]}
                       onclick={() => void toggleInstalledSkill(skill)}
                     ><span></span></button>
+                    <button type="button" class="skill-remove" disabled={!!skillToggleBusy[skill.id]}
+                      title="移除技能" aria-label={`移除技能 ${skill.name}`} onclick={() => void removeInstalledSkill(skill)}>{@render trashIcon(16)}</button>
                   </span>
                 </article>
               {/each}
@@ -14557,13 +14676,14 @@
               {#each sftpRows as r (r.path)}
                 {@const deleting = isSftpDeleting(r.path)}
                 {@const deleteTarget = isSftpDeleteTarget(r.path)}
+                {@const renaming = fileRename?.connId === sftpConnId && fileRename?.path === r.path}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div class="frow" class:on={sftpSel === r.path} class:deleting role="row" tabindex="-1" aria-busy={deleting}
-                  draggable={!deleting && !sftpXfer && !sftpNativeDragging} ondragstart={(e) => onSftpDragStart(e, r)}
+                  draggable={!deleting && !renaming && !sftpXfer && !sftpNativeDragging} ondragstart={(e) => onSftpDragStart(e, r)}
                   onclick={() => { if (!deleting) sftpSel = r.path; }}
-                  ondblclick={() => { if (!deleting) sftpOpenRow(r); }}
+                  ondblclick={() => { if (!deleting && !renaming) sftpOpenRow(r); }}
                   oncontextmenu={(e) => { e.stopPropagation(); if (!deleting) openFctx(e, r); }}
-                  onkeydown={(e) => { if (!deleting && e.key === 'Enter') sftpOpenRow(r); }}>
+                  onkeydown={(e) => { if (!deleting && !renaming && e.key === 'Enter') sftpOpenRow(r); }}>
                   <span class="fname" style="padding-left:{r.depth * 15}px">
                     {#if r.dir && !r.link}
                       <button class="fchev" class:open={sftpOpenDirs.has(r.path)} aria-label="展开" disabled={deleting} onclick={(e) => { e.stopPropagation(); if (!deleting) toggleDir(r); }}>
@@ -14580,7 +14700,25 @@
                     {:else}
                       <svg class="fic" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 1.8h5.2L12.8 5.4v8.8H4V1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9.2 1.8v3.6h3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
                     {/if}
-                    <span class="fname-t">{r.name}</span>
+                    {#if renaming && fileRename}
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <span class="file-rename" ondblclick={(e) => e.stopPropagation()} oncontextmenu={(e) => e.stopPropagation()}>
+                        <input use:focusFileRename bind:value={fileRename.value} aria-label={`重命名 ${r.name}`}
+                          aria-invalid={!!fileRename.err} readonly={fileRename.busy} spellcheck="false" autocapitalize="off" autocorrect="off"
+                          oninput={() => { if (fileRename) fileRename.err = ''; }}
+                          onblur={() => { if (!fileRename?.err) void saveFileRename(); }}
+                          onkeydown={(e) => {
+                            e.stopPropagation();
+                            if (e.isComposing) return;
+                            if (e.key === 'Enter') { e.preventDefault(); void saveFileRename(); }
+                            if (e.key === 'Escape' && !fileRename?.busy) { e.preventDefault(); fileRename = null; }
+                          }} />
+                        {#if fileRename.err}<small role="alert">{fileRename.err}</small>{/if}
+                      </span>
+                    {:else}
+                      <button type="button" class="fname-t" title="双击名称重命名" disabled={deleting}
+                        ondblclick={(e) => { e.preventDefault(); e.stopPropagation(); openRename(r); }}>{r.name}</button>
+                    {/if}
                     {#if deleteTarget}<span class="fdelete-state"><span class="fdelete-spin" aria-hidden="true"></span>删除中…</span>{/if}
                   </span>
                   <span class="fperm">{r.perms}</span>
@@ -18501,7 +18639,7 @@
         <button class="ctx-item" role="menuitem" onclick={() => pasteSftpEntry(r.path)} disabled={!!sftpXfer || sftpClipboard.connId !== sftpConnId}>粘贴到这里</button>
       {/if}
       <button class="ctx-item" role="menuitem" onclick={() => copyPath(r.path)}>复制路径</button>
-      <button class="ctx-item" role="menuitem" onclick={() => openRename(r)}>重命名…</button>
+      <button class="ctx-item" role="menuitem" onclick={() => openRename(r)}>重命名</button>
       <div class="ctx-div"></div>
       <button class="ctx-item danger" role="menuitem" onclick={() => sftpDelete(r)}>删除…</button>
     {:else}
@@ -18520,12 +18658,12 @@
 
 {#if fsAsk}
   <div class="mask" role="presentation" onclick={() => !fsAsk?.busy && (fsAsk = null)}></div>
-  <div class="modal" use:dialogGeometry={DIALOG_GEOMETRY.fileOperation} role="dialog" aria-modal="true" aria-label={fsAsk.mode === 'mkdir' ? '新建文件夹' : fsAsk.mode === 'create' ? '新建文件' : `重命名 ${fsAsk.from}`}>
-    <header class="sheet-head"><b>{fsAsk.mode === 'mkdir' ? '新建文件夹' : fsAsk.mode === 'create' ? '新建文件' : `重命名「${fsAsk.from}」`}</b><button class="x" onclick={() => (fsAsk = null)} disabled={fsAsk.busy}>×</button></header>
+  <div class="modal" use:dialogGeometry={DIALOG_GEOMETRY.fileOperation} role="dialog" aria-modal="true" aria-label={fsAsk.mode === 'mkdir' ? '新建文件夹' : '新建文件'}>
+    <header class="sheet-head"><b>{fsAsk.mode === 'mkdir' ? '新建文件夹' : '新建文件'}</b><button class="x" onclick={() => (fsAsk = null)} disabled={fsAsk.busy}>×</button></header>
     <div class="sheet-body">
       <p class="hint">位置：<code>{fsAsk.dir}</code></p>
       <!-- svelte-ignore a11y_autofocus -->
-      <input class="tin" bind:value={fsAsk.value} placeholder={fsAsk.mode === 'mkdir' ? '文件夹名' : fsAsk.mode === 'create' ? '文件名（例如 notes.txt）' : '新名字'} spellcheck="false" autocapitalize="off" autocorrect="off" autofocus disabled={fsAsk.busy} onkeydown={(e) => e.key === 'Enter' && confirmFsAsk()} />
+      <input class="tin" bind:value={fsAsk.value} placeholder={fsAsk.mode === 'mkdir' ? '文件夹名' : '文件名（例如 notes.txt）'} spellcheck="false" autocapitalize="off" autocorrect="off" autofocus disabled={fsAsk.busy} onkeydown={(e) => e.key === 'Enter' && confirmFsAsk()} />
       {#if fsAsk.err}<div class="err-note">{fsAsk.err}</div>{/if}
       <div class="row-end">
         <button class="btn ghost" onclick={() => (fsAsk = null)} disabled={fsAsk.busy}>取消</button>
@@ -19364,7 +19502,11 @@
   .frow.on { background: var(--accent-soft); }
   .frow.deleting, .frow.deleting:hover, .frow.deleting.on { background: var(--rail); opacity: .52; cursor: progress; }
   .fname { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; padding: 5px 0; }
-  .fname-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fname-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: default; }
+  .file-rename { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+  .file-rename input { min-width: 0; width: 100%; box-sizing: border-box; border: 1px solid var(--border2); border-radius: 3px; padding: 1px 3px; background: var(--bg, white); color: var(--text); font: inherit; }
+  .file-rename input:focus { outline: 1px solid var(--dim); }
+  .file-rename small { color: #c53b32; font-size: 11px; white-space: normal; }
   .fdelete-state { flex: none; display: inline-flex; align-items: center; gap: 4px; color: var(--dim); font-size: 11.5px; white-space: nowrap; }
   .fdelete-spin { width: 9px; height: 9px; border: 1.4px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: rspin .7s linear infinite; }
   .fchev, .fchev-sp { width: 14px; height: 14px; flex: none; }
@@ -20007,23 +20149,25 @@
   .skill-summary b { color: var(--text); font-size: 12.5px; }
   .skill-summary small { flex: 1 1 300px; color: var(--faint); font-size: 10.5px; text-align: right; }
   .skill-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
-  .skill-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 15px; border: 1px solid var(--border); border-radius: 13px; background: var(--card); box-shadow: var(--shadow-sm); transition: border-color .15s, opacity .15s; }
+  .skill-card { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); transition: border-color .15s, opacity .15s; }
   .skill-card:hover { border-color: #d5d0c6; }
   .skill-card.disabled { opacity: .68; }
-  .skill-card-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; background: var(--soft); color: var(--dim); }
-  .skill-card-copy { min-width: 0; display: grid; gap: 4px; }
-  .skill-card-title { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+  .skill-card-icon { width: 32px; height: 32px; display: grid; place-items: center; color: var(--dim); }
+  .skill-card-copy { min-width: 0; display: grid; gap: 6px; }
+  .skill-card-title { min-width: 0; display: flex; align-items: center; gap: 8px; }
   .skill-card-title b { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
   .skill-domain { flex: none; padding: 2px 7px; border: 1px solid #ddd8cd; border-radius: 999px; background: var(--soft); color: var(--dim); font-size: 9.5px; font-weight: 550; line-height: 1.35; white-space: nowrap; }
-  .skill-card-title em { flex: none; color: var(--faint); font-size: 10.5px; font-style: normal; }
   .skill-card-description { overflow: hidden; color: var(--dim); font-size: 11.5px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
-  .skill-card-meta { display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 10px; }
+  .skill-card-meta { min-width: 0; display: flex; align-items: center; gap: 7px; color: var(--faint); font-size: 10px; white-space: nowrap; }
+  .skill-card-meta > span, .skill-card-meta > em, .skill-card-meta > i { flex: none; }
   .skill-card-meta i { font-style: normal; }
   .skill-card-meta code { overflow: hidden; max-width: 120px; color: inherit; font-size: 9.5px; text-overflow: ellipsis; }
-  .skill-card-control { display: grid; grid-template-columns: auto auto; align-items: center; justify-items: end; gap: 5px 9px; }
-  .skill-card-control .switch { grid-row: 1 / span 2; grid-column: 2; }
-  .skill-enabled-label { color: var(--dim); font-size: 10.5px; white-space: nowrap; }
-  .skill-risk { padding: 2px 6px; border-radius: 999px; background: #fff3dd; color: #9a610d; font-size: 9.5px; font-style: normal; font-weight: 650; line-height: 1.3; }
+  .skill-card-control { display: flex; align-items: center; gap: 12px; }
+  .skill-remove { flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; padding: 0; color: var(--faint); cursor: pointer; transition: color .15s, background .15s; }
+  .skill-remove:hover:not(:disabled) { color: var(--err); background: var(--err-soft); }
+  .skill-remove:focus-visible { outline: 2px solid var(--dim); outline-offset: 2px; }
+  .skill-remove:disabled { cursor: wait; opacity: .5; }
+  .skill-risk { padding: 2px 6px; border-radius: 4px; background: #fff3dd; color: #9a610d; font-size: 9px; font-style: normal; font-weight: 550; line-height: 1.3; }
   .skill-card .switch:disabled { cursor: wait; opacity: .55; }
   .skill-filter-empty { min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: var(--faint); font-size: 12px; }
   .skill-filter-empty :global(svg) { opacity: .72; }
@@ -23160,10 +23304,10 @@
     .skill-picker-inline { max-width: min(240px, 48vw); }
     .skill-inner { padding-inline: 14px; }
     .skill-summary small { flex-basis: 100%; text-align: left; }
-    .skill-card { grid-template-columns: 34px minmax(0, 1fr); padding: 12px; }
-    .skill-card-icon { width: 34px; height: 34px; }
-    .skill-card-control { grid-column: 2; grid-template-columns: auto auto 34px; justify-content: start; justify-items: start; }
-    .skill-card-control .switch { grid-row: auto; grid-column: 3; }
+    .skill-card { gap: 10px; padding: 12px; }
+    .skill-card-title { flex-wrap: wrap; gap: 4px 8px; }
+    .skill-card-title b { flex-basis: 100%; }
+    .skill-card-control { gap: 8px; }
     .sites-page { padding: 14px 14px 24px; }
     .sites-global-popover { position: fixed; top: 52px; right: 12px; width: min(430px, calc(100vw - 24px)); }
     .sites-global-popover-grid, .sites-grid { grid-template-columns: 1fr; }
