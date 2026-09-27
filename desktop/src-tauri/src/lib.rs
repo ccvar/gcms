@@ -25,6 +25,7 @@ mod ssh;
 mod sftp_transfer;
 mod static_server;
 mod tasks;
+mod task_outcome;
 mod tools;
 mod turn_deadline;
 mod transfer;
@@ -2704,6 +2705,50 @@ mod workdir_tests {
         );
     }
 
+    #[test]
+    fn managed_settings_batch_validates_first_and_syncs_selected_fields() {
+        let dir = std::env::temp_dir().join(format!("pilot-settings-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("connections.json"), serde_json::to_vec(&[test_conn(dir.to_str().unwrap())]).unwrap()).unwrap();
+        let conns = pack::ConnStore::new(&dir).unwrap();
+        let tasks = tasks::TaskStore::new(&dir);
+        let store = managed::ManagedStore::new(&dir);
+        let sites: Vec<_> = ["alpha", "beta"].iter().map(|name| enable_managed(
+            &conns, &tasks, &store, "t".into(), (*name).into(), (*name).into(), format!("{name} 独立计划"),
+            3, 2, "l0".into(), 0, "claude".into(), "sonnet".into(), "high".into(),
+            "grok".into(), "grok-4.7".into(), "".into(), "".into(), "".into(), "".into(),
+        ).unwrap()).collect();
+        let ids: Vec<_> = sites.iter().map(|s| s.id.clone()).collect();
+        let patch = || serde_json::from_str::<managed::SettingsPatch>(r#"{"weekly_post_limit":7,"level":"l1","primary":{"brain":"codex","model":"gpt-6-sol","effort":"high"}}"#).unwrap();
+        let before = serde_json::to_value(store.list()).unwrap();
+        assert!(update_managed_settings(&store, &tasks, "other", ids.clone(), patch()).is_err());
+        assert!(update_managed_settings(&store, &tasks, "t", vec![ids[0].clone(), "missing".into()], patch()).is_err());
+        assert_eq!(serde_json::to_value(store.list()).unwrap(), before);
+        let next_runs: Vec<_> = sites.iter().flat_map(|s| s.task_ids.iter().map(|id| tasks.get(id).unwrap().next_run)).collect();
+        let result = update_managed_settings(&store, &tasks, "t", ids.clone(), patch()).unwrap();
+        assert!(result.iter().all(|r| r.error.is_none()));
+        for s in &sites {
+            let updated = store.get(&s.id).unwrap();
+            assert_eq!(updated.plan, s.plan);
+            assert_eq!(updated.weekly_post_limit, 7);
+            assert_eq!(updated.fallback_model, "grok-4.7");
+            for tid in &s.task_ids {
+                let task = tasks.get(tid).unwrap();
+                assert_eq!(task.brain, "codex"); assert_eq!(task.model, "gpt-6-sol");
+                assert_eq!(task.fallback_model, "grok-4.7");
+            }
+            let daily = tasks.get(&s.task_ids[0]).unwrap();
+            assert!(daily.prompt.contains(&s.plan));
+            assert!(daily.prompt.contains("不得超过 7 篇"));
+        }
+        assert_eq!(next_runs, sites.iter().flat_map(|s| s.task_ids.iter().map(|id| tasks.get(id).unwrap().next_run)).collect::<Vec<_>>());
+        tasks.mutate(&sites[0].task_ids[0], |t| t.prompt="用户独立指令".into()).unwrap();
+        let budget = serde_json::from_str(r#"{"token_weekly_budget":500000}"#).unwrap();
+        update_managed_settings(&store, &tasks, "t", ids, budget).unwrap();
+        assert_eq!(tasks.get(&sites[0].task_ids[0]).unwrap().prompt, "用户独立指令");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// 开启托管：三个配套任务（每日/审计/周报）创建齐、厂商/模型/强度逐项透传、
     /// 等级与上限进 prompt、记录字段完整、同站重复开启被拒。
     #[test]
@@ -4798,7 +4843,12 @@ fn respond_permit(
 
 #[tauri::command]
 fn list_tasks(state: tauri::State<'_, AppState>) -> Vec<ScheduledTask> {
-    state.tasks.list()
+    let conversations = state.convos.list().into_iter().map(|c| (c.id.clone(), c)).collect();
+    let mut tasks = state.tasks.list();
+    for task in &mut tasks {
+        task_outcome::correct_saved_outcomes(task, &conversations);
+    }
+    tasks
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5078,17 +5128,22 @@ fn notify_user(app: &AppHandle, title: &str, body: String) {
 /// 审计要点任一变化后调用，否则任务还带着旧边界跑。审计任务 prompt 是静态的，不用同步。
 /// 后台任务（fire_task）没有 AppState，签名收 TaskStore。
 fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
-    fn write_if_changed(tasks: &tasks::TaskStore, task_id: &str, prompt: String) {
+    let _ = sync_daily_prompt_checked(tasks, m);
+}
+
+fn sync_daily_prompt_checked(tasks: &tasks::TaskStore, m: &managed::ManagedSite) -> Result<(), String> {
+    fn write_if_changed(tasks: &tasks::TaskStore, task_id: &str, prompt: String) -> Result<(), String> {
         if tasks
             .get(task_id)
             .is_some_and(|current| current.prompt == prompt)
         {
-            return;
+            return Ok(());
         }
-        let _ = tasks.mutate(task_id, |task| {
+        tasks.mutate(task_id, |task| {
             task.prompt = prompt.clone();
             task.updated_at = now_secs();
-        });
+        })?.ok_or_else(|| format!("配套任务不存在：{task_id}"))?;
+        Ok(())
     }
 
     let growth_positioning = m.growth.as_ref().map(|growth| &growth.config.positioning);
@@ -5114,7 +5169,7 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
         } else {
             managed::apply_daily_prompt(&m.custom_daily_prompt, generated, &m.level)
         };
-        write_if_changed(tasks, tid, p);
+        write_if_changed(tasks, tid, p)?;
     }
     if let Some(tid) = m.task_ids.get(1) {
         let generated = if m.mode.is_growth() {
@@ -5130,7 +5185,7 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
         } else {
             managed::apply_audit_prompt(&m.custom_audit_prompt, generated)
         };
-        write_if_changed(tasks, tid, p);
+        write_if_changed(tasks, tid, p)?;
     }
     // 周报 prompt 带计划摘要（「计划关键词 vs 实际曝光词偏差」的对照基准），计划变了要跟着换。
     if let Some(tid) = m.task_ids.get(2) {
@@ -5147,8 +5202,65 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
         } else {
             managed::apply_report_prompt(&m.custom_report_prompt, generated)
         };
-        write_if_changed(tasks, tid, p);
+        write_if_changed(tasks, tid, p)?;
     }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct ManagedSettingsResult {
+    id: String,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn managed_update_settings(
+    state: tauri::State<'_, AppState>, conn_id: String, ids: Vec<String>, patch: managed::SettingsPatch,
+) -> Result<Vec<ManagedSettingsResult>, String> {
+    update_managed_settings(&state.managed, &state.tasks, &conn_id, ids, patch)
+}
+
+fn update_managed_settings(
+    managed_store: &managed::ManagedStore, tasks: &tasks::TaskStore,
+    conn_id: &str, ids: Vec<String>, patch: managed::SettingsPatch,
+) -> Result<Vec<ManagedSettingsResult>, String> {
+    if ids.is_empty() { return Err("请选择托管站点".into()); }
+    let mut unique = std::collections::HashSet::new();
+    // Validate the entire selection before any write (including fallback conflicts on each site).
+    for id in &ids {
+        if !unique.insert(id.clone()) { return Err("重复的托管记录".into()); }
+        let mut site = managed_store.get(id).ok_or("托管记录不存在")?;
+        patch.apply(&mut site, conn_id).map_err(|e| format!("{}：{e}", site.site_name))?;
+        if site.task_ids.len() != 3 || site.task_ids.iter().any(|tid| tasks.get(tid).is_none()) {
+            return Err(format!("{}：配套任务不完整，请先修复任务", site.site_name));
+        }
+    }
+    Ok(ids.into_iter().map(|id| {
+        let result = (|| -> Result<(), String> {
+            let site = managed_store.mutate_checked(&id, now_secs(), |m| patch.apply(m, conn_id))?
+                .ok_or("托管记录不存在")?;
+            // Update only selected model groups; task schedules, history and pause state stay intact.
+            if patch.primary.is_some() || patch.fallback.is_some() {
+                for tid in &site.task_ids {
+                    tasks.mutate(tid, |t| {
+                        if patch.primary.is_some() {
+                            t.brain = site.brain.clone(); t.model = site.model.clone(); t.effort = site.effort.clone();
+                        }
+                        if patch.fallback.is_some() {
+                            t.fallback_brain = site.fallback_brain.clone();
+                            t.fallback_model = site.fallback_model.clone(); t.fallback_effort = site.fallback_effort.clone();
+                        }
+                        t.updated_at = now_secs();
+                    })?.ok_or("配套任务不存在")?;
+                }
+            }
+            if patch.level.is_some() || patch.weekly_post_limit.is_some() || patch.weekly_edit_limit.is_some() {
+                sync_daily_prompt_checked(tasks, &site)?;
+            }
+            Ok(())
+        })();
+        ManagedSettingsResult { id, error: result.err().map(|e| format!("设置可能已部分保存，可重试同步：{e}")) }
+    }).collect())
 }
 
 /// 版本升级后修复已有托管任务的最终提示词。只在内容确实变化时写盘，
@@ -6092,18 +6204,22 @@ async fn managed_summary(
 ) -> Result<managed::ManagedSummary, String> {
     let m = state.managed.get(&id).ok_or("托管记录不存在")?;
     let conn = state.conns.get(&m.conn_id)?;
+    let conversations = state.convos.list().into_iter().map(|c| (c.id.clone(), c)).collect();
     let briefs: Vec<managed::TaskBrief> = m
         .task_ids
         .iter()
         .filter_map(|tid| state.tasks.get(tid))
-        .map(|t| managed::TaskBrief {
-            id: t.id,
-            title: t.title,
-            enabled: t.enabled,
-            last_status: t.last_status,
-            last_run: t.last_run,
-            next_run: t.next_run,
-            last_conv_id: t.last_conv_id,
+        .map(|mut t| {
+            task_outcome::correct_saved_outcomes(&mut t, &conversations);
+            managed::TaskBrief {
+                id: t.id,
+                title: t.title,
+                enabled: t.enabled,
+                last_status: t.last_status,
+                last_run: t.last_run,
+                next_run: t.next_run,
+                last_conv_id: t.last_conv_id,
+            }
         })
         .collect();
     let stats = managed::week_stats(&conn, &m.site_slug).await?;
@@ -7041,6 +7157,20 @@ async fn fire_task(
                         executor,
                         fallback_used,
                     });
+                } else if let Some(error) = task_outcome::failure_at(&c, u64::MAX) {
+                    last_conv = c.id.clone();
+                    if first_err.is_empty() {
+                        first_err = format!("{slug}: {error}");
+                    }
+                    run_sites.push(tasks::TaskRunSite {
+                        slug,
+                        ok: false,
+                        conv_id: c.id.clone(),
+                        error,
+                        deferred: false,
+                        executor,
+                        fallback_used,
+                    });
                 } else {
                     ok_count += 1;
                     last_conv = c.id.clone();
@@ -7099,6 +7229,7 @@ async fn fire_task(
     let now = now_secs();
     let all_ok = ok_count == targets.len();
     let deferred = limit_hit.is_some();
+    let run_ok = all_ok || (deferred && first_err.is_empty());
     let mut summary = if let Some(reset) = limit_hit {
         format!(
             "撞到订阅限额：完成 {ok_count}/{} 站，其余顺延——已顺延到 {} 后重试",
@@ -7120,11 +7251,14 @@ async fn fire_task(
     if fallback_count > 0 {
         summary.push_str(&format!("；备用模型接管 {fallback_count} 站"));
     }
+    if deferred && !first_err.is_empty() {
+        summary.push_str(&format!("；{first_err}"));
+    }
     let _ = tstore.mutate(&task.id, |x| {
         x.last_run = now;
         x.runs += 1;
         // 顺延＝非失败语义：限额不算这个任务「坏了」。
-        x.last_status = if all_ok || deferred {
+        x.last_status = if run_ok {
             "ok".into()
         } else {
             "error".into()
@@ -7143,7 +7277,7 @@ async fn fire_task(
             0,
             tasks::TaskRun {
                 ts: now,
-                ok: all_ok || deferred,
+                ok: run_ok,
                 summary: summary.clone(),
                 sites: run_sites.clone(),
                 deferred,
@@ -8771,6 +8905,7 @@ pub fn run() {
             managed_set_level,
             managed_set_edit_limit,
             managed_set_models,
+            managed_update_settings,
             managed_pause,
             managed_resume,
             managed_disable,

@@ -1,0 +1,33 @@
+export type ModelSetting = { brain: string; model: string; effort: string };
+export type ManagedSettingsPatch = {
+  primary?: ModelSetting;
+  fallback?: ModelSetting;
+  level?: string;
+  weekly_post_limit?: number;
+  weekly_edit_limit?: number;
+  token_weekly_budget?: number;
+};
+export type ManagedSettingsTarget = {
+  id: string; site_name: string; brain: string; model: string; effort: string;
+  fallback_brain?: string; fallback_model?: string; fallback_effort?: string;
+  level: string; weekly_post_limit: number; weekly_edit_limit: number; token_weekly_budget: number;
+};
+export const settingLabels = {
+  primary: '主模型', fallback: '备用模型', level: '托管级别',
+  weekly_post_limit: '每周产出上限', weekly_edit_limit: '每周存量修改上限', token_weekly_budget: '每周 token 预算',
+};
+export type SettingKey = keyof typeof settingLabels;
+export function validateManagedPatch(patch: ManagedSettingsPatch, targets: ManagedSettingsTarget[]): string {
+  if (!targets.length) return '请选择托管站点';
+  if (!Object.keys(patch).length) return '请至少选择一个修改项';
+  for (const [key, max] of [['weekly_post_limit', 50], ['weekly_edit_limit', 20], ['token_weekly_budget', Number.MAX_SAFE_INTEGER]] as const) {
+    const value = patch[key];
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < (key === 'token_weekly_budget' ? 0 : 1) || value > max)) return `${settingLabels[key]}数值无效`;
+  }
+  for (const t of targets) {
+    const p = patch.primary ?? {brain:t.brain, model:t.model, effort:t.effort};
+    const f = patch.fallback ?? {brain:t.fallback_brain, model:t.fallback_model, effort:t.fallback_effort};
+    if (f.brain && p.brain === f.brain && p.model === f.model && (p.effort || '') === (f.effort || '')) return `${t.site_name}：备用模型不能与主模型完全相同`;
+  }
+  return '';
+}

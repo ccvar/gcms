@@ -471,6 +471,71 @@ fn default_edit_limit() -> u32 {
     2
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelSetting {
+    pub brain: String,
+    pub model: String,
+    pub effort: String,
+}
+
+/// Missing fields are deliberately preserved, including plans and growth state.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsPatch {
+    pub primary: Option<ModelSetting>,
+    pub fallback: Option<ModelSetting>,
+    pub level: Option<String>,
+    pub weekly_post_limit: Option<u32>,
+    pub weekly_edit_limit: Option<u32>,
+    pub token_weekly_budget: Option<u64>,
+}
+
+impl SettingsPatch {
+    pub fn apply(&self, site: &mut ManagedSite, conn_id: &str) -> Result<(), String> {
+        if site.conn_id != conn_id { return Err("托管不属于当前工作区".into()); }
+        if self.primary.is_none() && self.fallback.is_none() && self.level.is_none()
+            && self.weekly_post_limit.is_none() && self.weekly_edit_limit.is_none()
+            && self.token_weekly_budget.is_none() {
+            return Err("请至少选择一个修改项".into());
+        }
+        for (model, optional) in [(&self.primary, false), (&self.fallback, true)] {
+            if let Some(value) = model {
+                if !(matches!(value.brain.as_str(), "claude" | "codex" | "grok")
+                    || optional && value.brain.is_empty() && value.model.is_empty() && value.effort.is_empty()) {
+                    return Err("模型厂商无效".into());
+                }
+            }
+        }
+        if self.level.as_ref().is_some_and(|v| !matches!(v.as_str(), "l0" | "l1" | "l2" | "l3")) {
+            return Err("托管级别无效".into());
+        }
+        if self.weekly_post_limit.is_some_and(|v| !(1..=50).contains(&v)) {
+            return Err("每周产出上限须为 1–50".into());
+        }
+        if self.weekly_edit_limit.is_some_and(|v| !(1..=20).contains(&v)) {
+            return Err("每周存量修改上限须为 1–20".into());
+        }
+        let mut next = site.clone();
+        if let Some(v) = &self.primary {
+            next.brain = v.brain.clone(); next.model = v.model.clone(); next.effort = v.effort.clone();
+        }
+        if let Some(v) = &self.fallback {
+            next.fallback_brain = v.brain.clone(); next.fallback_model = v.model.clone(); next.fallback_effort = v.effort.clone();
+        }
+        if !next.fallback_brain.is_empty() && next.brain == next.fallback_brain
+            && next.model == next.fallback_model && next.effort == next.fallback_effort {
+            return Err("备用模型不能与主模型完全相同".into());
+        }
+        if let Some(v) = &self.level { next.level = v.clone(); next.demote_note.clear(); }
+        if let Some(v) = self.weekly_post_limit { next.weekly_post_limit = v; }
+        if let Some(v) = self.weekly_edit_limit { next.weekly_edit_limit = v; }
+        if let Some(v) = self.token_weekly_budget { next.token_weekly_budget = v; }
+        *site = next;
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct ManagedStore {
     file: PathBuf,
@@ -1503,6 +1568,49 @@ mod tests {
             created_at: 1,
             updated_at: 1,
         }
+    }
+
+    #[test]
+    fn settings_patch_preserves_unselected_fields_and_checks_scope() {
+        let mut m = site("id", "blog");
+        m.paused = true;
+        m.custom_daily_prompt = "独立任务指令".into();
+        m.fallback_brain = "grok".into();
+        m.fallback_model = "grok-4.7".into();
+        let before = serde_json::to_value(&m).unwrap();
+        let patch: SettingsPatch = serde_json::from_str(r#"{"weekly_post_limit":8,"token_weekly_budget":0}"#).unwrap();
+        assert!(patch.apply(&mut m, "another-workspace").is_err());
+        assert_eq!(serde_json::to_value(&m).unwrap(), before);
+        patch.apply(&mut m, "c1").unwrap();
+        let mut expected = before;
+        expected["weekly_post_limit"] = 8.into();
+        assert_eq!(serde_json::to_value(&m).unwrap(), expected);
+    }
+
+    #[test]
+    fn settings_patch_rejects_invalid_values_without_mutation() {
+        for json in [r#"{}"#, r#"{"weekly_post_limit":0}"#, r#"{"weekly_post_limit":51}"#,
+            r#"{"weekly_edit_limit":21}"#, r#"{"level":"l9"}"#,
+            r#"{"primary":{"brain":"unknown","model":"x","effort":""}}"#,
+            r#"{"fallback":{"brain":"claude","model":"sonnet","effort":""}}"#] {
+            let mut m = site("id", "blog");
+            let before = serde_json::to_value(&m).unwrap();
+            let patch: SettingsPatch = serde_json::from_str(json).unwrap();
+            assert!(patch.apply(&mut m, "c1").is_err(), "{json}");
+            assert_eq!(serde_json::to_value(&m).unwrap(), before);
+        }
+        assert!(serde_json::from_str::<SettingsPatch>(r#"{"plan":"overwrite"}"#).is_err());
+    }
+
+    #[test]
+    fn settings_patch_explicitly_disables_fallback_and_keeps_growth_state() {
+        let mut m = site("id", "blog");
+        m.mode = ManagedMode::Growth;
+        m.fallback_brain = "grok".into(); m.fallback_model = "grok-4.7".into();
+        let patch: SettingsPatch = serde_json::from_str(r#"{"primary":{"brain":"codex","model":"","effort":"high"},"fallback":{"brain":"","model":"","effort":""}}"#).unwrap();
+        patch.apply(&mut m, "c1").unwrap();
+        assert!(m.mode.is_growth()); assert_eq!(m.plan, "定位：科技博客");
+        assert_eq!(m.brain, "codex"); assert_eq!(m.model, ""); assert!(m.fallback_brain.is_empty());
     }
 
     #[test]

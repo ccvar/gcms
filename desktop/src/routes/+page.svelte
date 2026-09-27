@@ -1,5 +1,7 @@
 <script lang="ts">
   import ConversationCanvas from '$lib/ConversationCanvas.svelte';
+  import SettingsIcon from '$lib/SettingsIcon.svelte';
+  import SidebarConversationList from '$lib/SidebarConversationList.svelte';
   import { pane, leaves, splitPane, removePane, replacePane, dropEdge, outerDropEdge, type Layout, type Edge } from '$lib/conversationLayout';
   import { onDestroy, tick, untrack } from 'svelte';
   import { invoke, Channel } from '@tauri-apps/api/core';
@@ -17,6 +19,10 @@
   import SiteFav from '$lib/SiteFav.svelte';
   import SkillFav from '$lib/SkillFav.svelte';
   import ModelFx from '$lib/ModelFx.svelte';
+  import ManagedSettings from '$lib/ManagedSettings.svelte';
+  import ManagedSitePicker from '$lib/ManagedSitePicker.svelte';
+  import ManagedCardMenu from '$lib/ManagedCardMenu.svelte';
+  import { settingLabels, validateManagedPatch, type ManagedSettingsPatch } from '$lib/managedSettings';
   import UsageRing from '$lib/UsageRing.svelte';
   import { hideTip, showTipFor, tip as tipAction } from '$lib/tip';
   import AppIcon from '$lib/AppIcon.svelte';
@@ -5015,6 +5021,58 @@
   let managedList = $state<ManagedSite[]>([]);
   let managedLoading = $state(false);
   const managedOfConn = $derived(managedList.filter((m) => m.conn_id === activeConnId));
+  let managedBatch = $state(false);
+  let managedSelected = $state<string[]>([]);
+  let managedSelectionConn = $state('');
+  let managedEditor = $state<{connId:string;targets:ManagedSite[]} | null>(null);
+  let managedEditBusy = $state(false);
+  let managedEditError = $state('');
+  $effect(() => {
+    if (managedSelectionConn !== activeConnId) {
+      managedSelectionConn = activeConnId; managedBatch = false; managedSelected = [];
+      if (!managedEditBusy) managedEditor = null;
+    }
+  });
+  const managedSelectedSites = $derived(managedOfConn.filter(m=>managedSelected.includes(m.id)));
+  function openManagedEditor(targets: ManagedSite[]) {
+    if (!targets.length || managedEditBusy) return;
+    managedEditError = '';
+    managedEditor = {connId:activeConnId,targets:targets.map(m=>({...m}))};
+  }
+  async function saveManagedSettings(patch: ManagedSettingsPatch) {
+    const editor = managedEditor;
+    if (!editor || managedEditBusy) return;
+    managedEditError = validateManagedPatch(patch, editor.targets);
+    if (managedEditError) return;
+    for (const model of [patch.primary,patch.fallback]) {
+      if (model?.brain && !brainUsable(model.brain as Brain)) { managedEditError='所选模型厂商尚未就绪，请先授权'; return; }
+    }
+    const changes = Object.entries(patch).map(([key,value]) => {
+      const label=settingLabels[key as keyof ManagedSettingsPatch];
+      if (key==='primary' || key==='fallback') {
+        const m=value as {brain:string;model:string;effort:string};
+        return `${label}：${m.brain ? `${modelDisp(m.brain,m.model)} · ${effortDisp(m.effort)}` : '停用'}`;
+      }
+      return `${label}：${key==='level'?levelLabel(String(value)):key==='token_weekly_budget'&&value===0?'不限':value}`;
+    });
+    managedEditBusy=true;
+    try {
+      const yes=await confirmDialog(`将修改 ${editor.targets.length} 个站点：${editor.targets.map(m=>m.site_name).join('、')}\n\n${changes.join('\n')}\n\n未勾选的设置与各站运营计划保持不变。${patch.level==='l3'?`\n\n${L3_WARN}`:patch.level && patch.level!=='l0'?'\n所选等级允许自动发布常规文章。':''}`, {title:'确认修改托管',confirmText:'保存修改',kind:'warning'});
+      if (!yes) return;
+      const results=await invoke<{id:string;error:string|null}[]>('managed_update_settings',{connId:editor.connId,ids:editor.targets.map(m=>m.id),patch});
+      const failed=results.filter(r=>r.error);
+      if (failed.length) {
+        managedEditError=`${results.length-failed.length} 个成功，${failed.length} 个未完成。\n${failed.map(r=>`${editor.targets.find(m=>m.id===r.id)?.site_name}：${r.error}`).join('\n')}`;
+        managedSelected=failed.map(r=>r.id);
+        managedEditor={connId:editor.connId,targets:editor.targets.filter(m=>failed.some(r=>r.id===m.id))};
+      } else {
+        managedEditor=null; managedSelected=[]; managedBatch=false;
+        say(`已更新 ${results.length} 个站点的托管设置；运行中的任务从下一次执行生效`);
+      }
+      await loadManaged(); await loadTasks();
+    } catch(e) { managedEditError=String(e); }
+    finally { managedEditBusy=false; }
+  }
   let mSummaries = $state<Record<string, ManagedSummary>>({});
   let mDrafts = $state<Record<string, ManagedDraft[]>>({});
   type ManagedCardPanel = 'growth' | 'queue' | 'plan';
@@ -5063,7 +5121,7 @@
     catch (e) { say(String(e), 'err'); }
   }
   async function disableManaged(m: ManagedSite) {
-    const yes = await confirmDialog(`关闭「${m.site_name}」的托管？三个配套任务会被删除；站点内容与草稿一概不动。`, { title: '关闭托管', kind: 'warning' });
+    const yes = await confirmDialog(`删除「${m.site_name}」的托管？三个配套任务会被删除；站点内容与草稿一概不动。`, { title: '删除托管', confirmText: '删除托管', kind: 'danger' });
     if (!yes) return;
     try { await invoke('managed_disable', { id: m.id }); await loadManaged(); await loadTasks(); } catch (e) { say(String(e), 'err'); }
   }
@@ -5449,6 +5507,28 @@
   let mwMode = $state<ManagedMode | ''>('');
   let mwStep = $state(1);
   let mwSite = $state('');
+  let mwSites = $state<string[]>([]);
+  let mwConnId = $state('');
+  let mwCreateError = $state('');
+  let mwCreateProgress = $state('');
+  let mwSiteDrafts = $state<Record<string,{plan:string;prompts:ManagedPromptSet;edited:Record<ManagedPromptKey,boolean>}>>({});
+  function saveMwSiteDraft() {
+    if (mwSite) mwSiteDrafts[mwSite] = {plan:mwPlan,prompts:{...mwPrompts},edited:{...mwPromptEdited}};
+  }
+  function selectMwPlanSite(slug: string) {
+    if (mwGenBusy || mwBusy || slug===mwSite) return;
+    saveMwSiteDraft(); mwSite=slug;
+    const draft=mwSiteDrafts[slug];
+    mwPlan=draft?.plan || ''; mwPrompts=draft?.prompts || blankManagedPrompts();
+    mwPromptEdited=draft?.edited || {daily:false,audit:false,report:false};
+    mwPromptDefaults=blankManagedPrompts(); mwGenRun=null; mwGenError=''; mwGenNotice='';
+    if (mwStep===3 && mwMode==='plan') void mwRefreshPromptDefaults();
+  }
+  function selectMwSites(slugs: string[]) {
+    if (mwGenBusy || mwBusy) return;
+    mwSites=slugs;
+    if (!slugs.includes(mwSite)) selectMwPlanSite(slugs[0] || '');
+  }
   let mwPlan = $state('');
   let mwLimit = $state(3);
   let mwGenBusy = $state(false);
@@ -5514,15 +5594,21 @@
   // 预检失败（网络/旧服务端等）静默降级：不警示也不拦——预检绝不能挡住向导。
   let mwWarns = $state<string[]>([]);
   let mwPrecheckSeq = 0; // 竞态防护：切换站点/重开向导只认最后一次结果
-  async function runMwPrecheck(slug: string) {
+  async function runMwPrecheck(slugs: string[]) {
     const seq = ++mwPrecheckSeq;
     mwWarns = [];
     try {
-      const r = await invoke<{ published_count: number; stats: string; warnings: string[] }>('managed_precheck', { connId: activeConnId, siteSlug: slug });
-      if (seq === mwPrecheckSeq) mwWarns = r.warnings;
+      const connId=mwConnId;
+      const results=await Promise.all(slugs.map(async slug=>{
+        try {
+          const r = await invoke<{warnings:string[]}>('managed_precheck',{connId,siteSlug:slug});
+          return r.warnings.map(w=>slugs.length>1?`${sites.find(s=>s.slug===slug)?.name || slug}：${w}`:w);
+        } catch { return []; }
+      }));
+      if (seq === mwPrecheckSeq) mwWarns = results.flat();
     } catch { /* 预检失败：静默降级 */ }
   }
-  $effect(() => { if (mwOpen && mwMode && mwSite) void runMwPrecheck(mwSite); else { mwPrecheckSeq++; mwWarns = []; } });
+  $effect(() => { if (mwOpen && mwMode && mwSites.length) void runMwPrecheck([...mwSites]); else { mwPrecheckSeq++; mwWarns = []; } });
   function setMwStep(step: number) {
     mwStep = step;
     requestAnimationFrame(() => {
@@ -5534,6 +5620,7 @@
     mwGenRun = null; mwGenError = ''; mwGenNotice = ''; mwPermitError = ''; mwPermitSending = [];
     mwOpen = true; mwMode = ''; mwStep = 1; mwPlan = ''; mwLimit = 3; mwGenBusy = false; mwBusy = false;
     mwSite = sites.find((s) => !managedOfConn.some((m) => m.site_slug === s.slug))?.slug ?? '';
+    mwSites=mwSite?[mwSite]:[]; mwConnId=activeConnId; mwSiteDrafts={}; mwCreateError=''; mwCreateProgress='';
     mwBrain = brainUsable(prefs.brain) ? prefs.brain : firstUsableBrain();
     mwModel = mwBrain === prefs.brain && isLauncherModel(mwBrain, prefs.model) ? prefs.model : defaultModelFor(mwBrain);
     mwEffort = mwBrain === prefs.brain ? (prefs.effort ?? '') : '';
@@ -5578,14 +5665,14 @@
     };
   }));
   const mwSelectedSite = $derived(sites.find((s) => s.slug === mwSite));
+  const mwChosenSiteOpts = $derived(mwSiteOpts.filter(s=>mwSites.includes(s.value)));
   const mwGrowthDataState = $derived.by(() => {
-    const ga = mwSelectedSite?.integrations?.analytics;
-    const gsc = mwSelectedSite?.integrations?.search_console;
+    const selected=sites.filter(s=>mwSites.includes(s.slug));
     return {
-      ga: !!ga?.enabled,
-      gsc: !!gsc?.enabled,
-      gaConfigured: !!ga?.configured,
-      gscConfigured: !!gsc?.configured,
+      ga: selected.length>0 && selected.every(s=>s.integrations?.analytics?.enabled),
+      gsc: selected.length>0 && selected.every(s=>s.integrations?.search_console?.enabled),
+      gaConfigured: selected.some(s=>s.integrations?.analytics?.configured),
+      gscConfigured: selected.some(s=>s.integrations?.search_console?.configured),
     };
   });
   function splitManagedLines(value: string): string[] {
@@ -5721,6 +5808,7 @@
   }
   async function mwRefreshPromptDefaults() {
     mwPromptBusy = true; mwPromptError = '';
+    const slug=mwSite;
     const site = sites.find((s) => s.slug === mwSite);
     try {
       const preview = await invoke<ManagedPromptSet>('managed_prompt_preview', {
@@ -5729,14 +5817,15 @@
         weeklyEditLimit: Math.min(20, Math.max(1, Math.round(Number(mwEditLimit) || 2))),
         level: mwLevel,
       });
+      if(slug!==mwSite) return;
       mwPromptDefaults = preview;
       const next = { ...mwPrompts };
       for (const key of ['daily', 'audit', 'report'] as ManagedPromptKey[]) {
         if (!mwPromptEdited[key]) next[key] = preview[key];
       }
       mwPrompts = next;
-    } catch (e) { mwPromptError = String(e); }
-    finally { mwPromptBusy = false; }
+    } catch (e) { if(slug===mwSite) mwPromptError = String(e); }
+    finally { if(slug===mwSite) mwPromptBusy = false; }
   }
   async function mwEnterStep3() {
     setMwStep(3);
@@ -5751,13 +5840,13 @@
     mwPromptEdited = { ...mwPromptEdited, [mwPromptTab]: false };
   }
   async function mwEnable() {
-    if (!mwSite || mwBusy) return;
+    if (!mwSites.length || mwBusy || mwConnId!==activeConnId) return;
     if (!brainUsable(mwBrain as Brain)) { say('所选厂商未就绪，去设置里授权或换一个', 'err'); return; }
     if (!mwFallbackValid) { say('备用模型必须可用，并且不能与主模型完全相同', 'err'); return; }
     mwBusy = true;
     const site = sites.find((s) => s.slug === mwSite);
     try {
-      await invoke('managed_enable', {
+      await mwCreateForSites('managed_enable', {
         connId: activeConnId, siteSlug: mwSite, siteName: site?.name || mwSite,
         plan: mwPlan, weeklyPostLimit: mwLimit, weeklyEditLimit: Math.min(20, Math.max(1, Math.round(Number(mwEditLimit) || 2))), level: mwLevel,
         tokenWeeklyBudget: Math.max(0, Math.round(Number(mwBudget) || 0)),
@@ -5769,14 +5858,12 @@
         customAuditPrompt: mwPromptEdited.audit ? mwPrompts.audit : '',
         customReportPrompt: mwPromptEdited.report ? mwPrompts.report : '',
       });
-      say('托管已开启：每日内容 + 每周审计 + 每周周报三个任务已创建');
-      mwOpen = false; await loadManaged(); await loadTasks();
     } catch (e) { say(String(e), 'err'); }
     finally { mwBusy = false; }
   }
 
   const mwGrowthReady = $derived(
-    !!mwSite &&
+    mwSites.length>0 && mwConnId===activeConnId &&
     brainUsable(mwBrain as Brain) &&
     mwFallbackValid
   );
@@ -5785,7 +5872,7 @@
     mwBusy = true;
     const site = sites.find((s) => s.slug === mwSite);
     try {
-      await invoke('managed_growth_enable', {
+      await mwCreateForSites('managed_growth_enable', {
         connId: activeConnId,
         siteSlug: mwSite,
         siteName: site?.name || mwSite,
@@ -5814,15 +5901,44 @@
         customAuditPrompt: '',
         customReportPrompt: '',
       });
-      say('增长托管已开启：会先形成增长机会，再安排内容与复盘');
-      mwOpen = false;
-      await loadManaged();
-      await loadTasks();
     } catch (e) {
       say(`开启增长托管失败：${String(e)}`, 'err');
     } finally {
       mwBusy = false;
     }
+  }
+
+  async function mwCreateForSites(command: string, common: Record<string,unknown>) {
+    saveMwSiteDraft();
+    const connId=mwConnId;
+    // Snapshot every payload before the first await: UI/connection changes cannot retarget a batch.
+    const requests=mwSites.map(slug=>{
+      const draft=mwSiteDrafts[slug];
+      return {...common,connId,siteSlug:slug,siteName:sites.find(s=>s.slug===slug)?.name || slug,
+        ...(command==='managed_enable'?{plan:draft?.plan || '',
+          customDailyPrompt:draft?.edited.daily?draft.prompts.daily:'',
+          customAuditPrompt:draft?.edited.audit?draft.prompts.audit:'',
+          customReportPrompt:draft?.edited.report?draft.prompts.report:''}:{}),
+      };
+    });
+    mwCreateError='';
+    const failed:string[]=[]; const errors:string[]=[];
+    for(const [i,request] of requests.entries()) {
+      mwCreateProgress=`正在创建 ${i+1}/${requests.length}：${request.siteName}`;
+      try { await invoke(command,request); }
+      catch(e) { failed.push(request.siteSlug); errors.push(`${request.siteName}：${String(e)}`); }
+    }
+    mwCreateProgress='';
+    if(failed.length) {
+      mwCreateError=`${requests.length-failed.length} 个已开启，${failed.length} 个未完成。重试仅处理未完成的站点。\n${errors.join('\n')}`;
+      mwSites=failed;
+      if(!failed.includes(mwSite)) {
+        mwSite=failed[0]; const draft=mwSiteDrafts[mwSite];
+        mwPlan=draft?.plan || ''; mwPrompts=draft?.prompts || blankManagedPrompts();
+        mwPromptEdited=draft?.edited || {daily:false,audit:false,report:false};
+      }
+    } else { mwOpen=false; say(`已开启 ${requests.length} 个站点的托管，各站分别创建三个配套任务`); }
+    await loadManaged(); await loadTasks();
   }
 
   interface TaskForm {
@@ -13012,7 +13128,7 @@
       {#if visibleGrouped.length === 0}
         <p class="rail-empty">{inSkillWorkspace ? '还没有技能对话。' : '还没有对话。'}<br />{inSkillWorkspace ? '选择一个已启用技能，直接说你想做什么。' : '选好站点和模型，直接说你想做什么。'}</p>
       {/if}
-      {#each visibleGrouped as g (g.slug)}
+      {#each visibleGrouped as g (JSON.stringify([inSkillWorkspace ? 'skills' : activeConnId, g.slug]))}
         <button class="site-grp" onclick={() => toggleSite(g.slug)} title={g.name}>
           <svg class="site-grp-chev" class:collapsed={collapsedSites.has(g.slug)} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
           {#if inSkillWorkspace}
@@ -13035,8 +13151,8 @@
           {#if g.url}<span class="site-grp-host" title={hostOf(g.url)}>{hostOf(g.url)}</span>{/if}
         </button>
         {#if !collapsedSites.has(g.slug)}
-          {#each g.subs as sub (sub.type)}
-            {#each sub.items as c (c.id)}
+          <SidebarConversationList items={g.subs.flatMap(sub => sub.items)} label={g.name}>
+            {#snippet row(c)}
               <div class="convo {activeConvId === c.id ? 'on' : ''}" onpointerdown={(e)=>startConversationPointerDrag(e,c.id)} draggable="true" ondragstart={(e)=>startConversationDrag(e,c.id)} ondragend={endConversationDrag} role="button" tabindex="0"
                 onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
                 <div class="convo-body">
@@ -13048,8 +13164,8 @@
                 </div>
                 <button class="convo-x" title="删除对话" onclick={(e) => { e.stopPropagation(); deleteConv(c.id); }}>×</button>
               </div>
-            {/each}
-          {/each}
+            {/snippet}
+          </SidebarConversationList>
         {/if}
       {/each}
     </div>
@@ -14171,7 +14287,7 @@
             aria-label={managedLoading ? '正在刷新托管数据' : '刷新托管数据'}
             data-tip={managedLoading ? '正在刷新托管数据…' : '刷新托管数据'}
           >{@render refreshIcon(managedLoading)}</button>
-          <button class="btn soft bare" onclick={openManagedWizard} disabled={!sites.length}>{@render plusIcon()}托管一个站点</button>
+          <button class="btn soft bare" onclick={openManagedWizard} disabled={!sites.length}>{@render plusIcon()}新增托管</button>
         </div>
       </header>
       <div class="thread">
@@ -14241,7 +14357,15 @@
                   </span>
                 {/if}
                 <span class="ss-seg" use:tipAction={'本周托管任务累计用量，预算熔断同口径'}><b class="ss-num">{mdTok(mdAgg.tokens)}</b><span class="ss-lbl">token</span></span>
+                <button class="btn sm ghost md-batch-trigger" onclick={()=>{managedBatch=!managedBatch;managedSelected=[];}}>{@render settingsIcon()}{managedBatch?'退出批量操作':'批量操作'}</button>
               </div>
+              {#if managedBatch}
+                <div class="md-batch-bar">
+                  <label><input type="checkbox" checked={managedSelectedSites.length===managedOfConn.length} onchange={e=>managedSelected=e.currentTarget.checked?managedOfConn.map(m=>m.id):[]} />全选</label>
+                  <span>已选 {managedSelectedSites.length} 个站点</span>
+                  <button class="btn sm" disabled={!managedSelectedSites.length} onclick={()=>openManagedEditor(managedSelectedSites)}>修改托管设置</button>
+                </div>
+              {/if}
             </div>
             {#each managedOfConn as m (m.id)}
               {@const sum = mSummaries[m.id]}
@@ -14251,10 +14375,8 @@
               {@const growthPending = growthOpps.filter((item) => item.status === 'candidate').length}
               {@const tP = reportTrend(m, 'published')}
               {@const tC = reportTrend(m, 'clicks')}
-              <div class="task-card {m.paused ? 'off' : ''}" id={`mc-${m.id}`}>
-                <div class="task-toggle">
-                  <button class="switch {m.paused ? '' : 'on'}" title={m.paused ? '已暂停（配套任务全部停跑）' : '托管中'} onclick={() => toggleManaged(m)}><span></span></button>
-                </div>
+              <div class="task-card managed-card {m.paused ? 'off' : ''}" id={`mc-${m.id}`}>
+                {#if managedBatch}<input class="md-select" type="checkbox" aria-label={`选择 ${m.site_name}`} checked={managedSelected.includes(m.id)} onchange={e=>managedSelected=e.currentTarget.checked?[...managedSelected,m.id]:managedSelected.filter(id=>id!==m.id)} />{/if}
                 <div class="task-body">
                   <div class="md-title-row">
                     <b><SiteFav src={siteFav(m.site_slug)} label={m.site_slug} size={14} /> {m.site_name}</b>
@@ -14450,7 +14572,7 @@
                   {/if}
                 </div>
                 <div class="task-actions">
-                  <button class="x sm" title="关闭托管（删配套任务，内容不动）" onclick={() => disableManaged(m)}>×</button>
+                  <ManagedCardMenu paused={m.paused} onedit={()=>openManagedEditor([m])} ontoggle={()=>void toggleManaged(m)} ondelete={()=>void disableManaged(m)} />
                 </div>
               </div>
             {/each}
@@ -14983,7 +15105,7 @@
 {#snippet aiAnalyzeIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M7.2 1.8c.3 2.5 1.5 3.7 4 4-2.5.3-3.7 1.5-4 4-.3-2.5-1.5-3.7-4-4 2.5-.3 3.7-1.5 4-4Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M12.2 9.2c.16 1.45.85 2.14 2.3 2.3-1.45.16-2.14.85-2.3 2.3-.16-1.45-.85-2.14-2.3-2.3 1.45-.16 2.14-.85 2.3-2.3Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" /></svg>{/snippet}
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
-{#snippet settingsIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="2.1" stroke="currentColor" stroke-width="1.25" /><path d="M6.9 1.9h2.2l.45 1.55c.34.13.66.31.95.54l1.56-.4 1.1 1.9-1.1 1.15c.03.18.04.36.04.55s-.01.37-.04.55l1.1 1.15-1.1 1.9-1.56-.4c-.29.23-.61.41-.95.54L9.1 14.1H6.9l-.45-1.58a5.1 5.1 0 0 1-.95-.54l-1.56.4-1.1-1.9 1.1-1.15a3.4 3.4 0 0 1 0-1.1l-1.1-1.15 1.1-1.9 1.56.4c.29-.23.61-.41.95-.54L6.9 1.9Z" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round" /></svg>{/snippet}
+{#snippet settingsIcon()}<SettingsIcon />{/snippet}
 {#snippet domainEditIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7.2" cy="7.2" r="4.7" stroke="currentColor" stroke-width="1.2" /><path d="M2.6 7.2h9.2M7.2 2.5c1.35 1.35 2 2.92 2 4.7s-.65 3.35-2 4.7c-1.35-1.35-2-2.92-2-4.7s.65-3.35 2-4.7Z" stroke="currentColor" stroke-width="1.05" stroke-linecap="round" stroke-linejoin="round" /><path d="m10.7 12.1 2.65-2.65 1.2 1.2-2.65 2.65-1.65.45.45-1.65Z" fill="white" stroke="currentColor" stroke-width="1" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet gcmsInstallIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2.5" width="12" height="4.3" rx="1.2" stroke="currentColor" stroke-width="1.2" /><path d="M4.5 4.65h.01M7.2 4.65h4.3M8 8v5.5M5.5 11 8 13.5 10.5 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet gcmsUpdateIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2v7.2M5.3 6.8 8 9.5l2.7-2.7M3 11.2v1.3c0 .7.6 1.3 1.3 1.3h7.4c.7 0 1.3-.6 1.3-1.3v-1.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
@@ -18920,14 +19042,23 @@
 {/snippet}
 
 <!-- 托管 · 先选方案，再进入彼此隔离的计划托管 / 增长托管向导 -->
+{#if managedEditor}
+  {#key managedEditor}<ManagedSettings targets={managedEditor.targets} options={comboOpts} levels={LEVEL_OPTS} busy={managedEditBusy} error={managedEditError} onsave={saveManagedSettings} onclose={()=>{if(!managedEditBusy)managedEditor=null;}} />{/key}
+{/if}
 {#if mwOpen}
   <div class="mask" role="presentation" onclick={() => void closeManagedWizard()}></div>
   <div class="modal wide md-managed-wizard" use:dialogGeometry={DIALOG_GEOMETRY.managedWizard} role="dialog" aria-modal="true" aria-labelledby="managed-wizard-title">
     <header class="sheet-head">
-      <b id="managed-wizard-title">{mwMode === 'growth' ? '增长托管' : mwMode === 'plan' ? '计划托管' : '托管一个站点'}{#if mwMode}<small class="dim"> · 第 {mwStep}/3 步</small>{/if}</b>
+      <b id="managed-wizard-title">{mwMode === 'growth' ? '增长托管' : mwMode === 'plan' ? '计划托管' : '新增托管'}{#if mwMode}<small class="dim"> · 第 {mwStep}/3 步 · 已选 {mwSites.length} 个站点</small>{/if}</b>
       <button class="x" aria-label="关闭托管向导" onclick={() => void closeManagedWizard()} disabled={mwBusy}>×</button>
     </header>
     <div class="sheet-body" bind:this={mwBodyEl}>
+      {#if mwCreateError}<p class="err-note" style="white-space:pre-wrap" role="alert">{mwCreateError}</p>{/if}
+      {#if mwCreateProgress}<p class="hint" role="status">{mwCreateProgress}</p>{/if}
+      {#if mwMode==='plan' && mwStep>1 && mwSites.length>1}
+        <div class="tfield"><span>当前编辑站点（每站计划和任务指令独立保存）</span><Dropdown value={mwSite} options={mwChosenSiteOpts} disabled={mwGenBusy || mwBusy} onchange={selectMwPlanSite} /></div>
+        <p class="hint">模型、级别与每周上限应用到全部所选站点；运营计划和手动任务指令仅用于当前站点。</p>
+      {/if}
       {#if !mwMode}
         <div class="md-mode-intro">
           <b>选择托管方案</b>
@@ -18954,8 +19085,8 @@
         <p class="md-mode-note">同一站点同一时间只能运行一种托管方案，避免重复选题和任务冲突。</p>
       {:else if mwMode === 'plan'}
       {#if mwStep === 1}
-        <div class="tfield"><span>选择站点（一个站一条托管）</span>
-          <Dropdown searchable bind:value={mwSite} options={mwSiteOpts} placeholder="选择站点" />
+        <div class="tfield"><span>选择站点（可多选，每站独立托管）</span>
+          <ManagedSitePicker value={mwSites} options={mwSiteOpts} onchange={selectMwSites} />
         </div>
         <p class="hint">开启后会替这个站自动创建三个定时任务：每日内容（按计划写稿存草稿）+ 每周审计（自查质量/查重/内链）+ 每周周报（汇总本周数据）。模型与强度在第 3 步选择。</p>
         {@render mwPrecheckBlock()}
@@ -19097,13 +19228,13 @@
       {/if}
       {:else}
         {#if mwStep === 1}
-          <div class="tfield"><span>选择站点（一个站一条托管）</span>
-            <Dropdown searchable bind:value={mwSite} options={mwSiteOpts} placeholder="选择站点" />
+          <div class="tfield"><span>选择站点（可多选，每站独立托管）</span>
+            <ManagedSitePicker value={mwSites} options={mwSiteOpts} onchange={selectMwSites} />
           </div>
           <div class="md-growth-data">
             <div class="md-growth-data-head">
               <span>
-                <b>增长依据</b>
+                <b>增长依据{mwSites.length>1?' · 全部所选站点':''}</b>
                 <small>补充定位可收紧边界；留空则依据现有内容，GSC 发现机会，GA 判断访问质量。</small>
               </span>
               <em class:partial={!mwGrowthDataState.ga || !mwGrowthDataState.gsc}>{mwGrowthDataState.ga && mwGrowthDataState.gsc ? '数据已就绪' : '可先积累数据'}</em>
@@ -19127,6 +19258,7 @@
             <span><b>确认站点方向</b><small>可以直接使用自动识别，也可以补充少量信息让方向更准确。</small></span>
             <em>{mwGrowthAutoPositioning ? '当前：自动识别' : '自动识别 + 你的补充'}</em>
           </div>
+          {#if mwSites.length>1}<p class="hint">以下补充会应用到 {mwSites.length} 个站点。站点方向不同时建议留空，由 Pilot 分别识别各站定位。</p>{/if}
           <div class="md-growth-auto" class:with-input={!mwGrowthAutoPositioning}>
             <span class="md-mode-icon growth">{@render managedGrowthIcon(19)}</span>
             <span class="md-growth-auto-copy">
@@ -19186,7 +19318,7 @@
         {:else}
           <div class="md-growth-review">
             <span class="md-mode-icon growth">{@render managedGrowthIcon(19)}</span>
-            <span><b>{mwSelectedSite?.name || mwSite} · 增长托管</b><small>先形成机会，再执行内容，发布后进入观察与复盘。</small></span>
+            <span><b>{mwSites.length>1?`${mwSites.length} 个站点`:mwSelectedSite?.name || mwSite} · 增长托管</b><small>每站分别形成机会与任务，再执行内容，发布后进入观察与复盘。</small></span>
             <em>{mwGrowthAutoPositioning ? '自动识别' : mwGrowthDataState.ga && mwGrowthDataState.gsc ? '数据驱动' : '定位驱动起步'}</em>
           </div>
           <div class="md-growth-loop" aria-label="增长托管运行方式">
@@ -19240,25 +19372,25 @@
         {#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}
         {#if mwStep === 1}
           <button class="btn ghost" onclick={backToManagedModeChoice}>返回方案</button>
-          <button class="btn primary" onclick={() => setMwStep(2)} disabled={!mwSite}>下一步</button>
+          <button class="btn primary" onclick={() => setMwStep(2)} disabled={!mwSites.length}>下一步</button>
         {:else if mwStep === 2}
           <button class="btn ghost" onclick={() => setMwStep(1)} disabled={mwGenBusy}>上一步</button>
           <button class="btn primary" onclick={() => void mwEnterStep3()} disabled={mwGenBusy}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button>
         {:else}
-          <button class="btn ghost" onclick={() => setMwStep(2)}>上一步</button>
-          <button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain) || !mwFallbackValid}>{mwBusy ? '开启中…' : '确认并开启计划托管'}</button>
+          <button class="btn ghost" onclick={() => setMwStep(2)} disabled={mwBusy}>上一步</button>
+          <button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSites.length || mwConnId!==activeConnId || !brainUsable(mwBrain as Brain) || !mwFallbackValid}>{mwBusy ? '开启中…' : `确认开启 ${mwSites.length} 个站点`}</button>
         {/if}
       {:else}
         {#if mwStep === 3}<span class="md-bound-tip" data-tip="增长托管会先生成机会池，再按等级边界执行；同一站点不会同时运行计划托管。" aria-label="边界说明"><span class="md-bound-icon">!</span><span>边界说明</span></span>{/if}
         {#if mwStep === 1}
           <button class="btn ghost" onclick={backToManagedModeChoice}>返回方案</button>
-          <button class="btn primary" onclick={() => setMwStep(2)} disabled={!mwSite}>下一步</button>
+          <button class="btn primary" onclick={() => setMwStep(2)} disabled={!mwSites.length}>下一步</button>
         {:else if mwStep === 2}
           <button class="btn ghost" onclick={() => setMwStep(1)}>上一步</button>
           <button class="btn primary" onclick={() => setMwStep(3)}>{mwGrowthAutoPositioning ? '使用自动识别并继续' : '保存定位并继续'}</button>
         {:else}
-          <button class="btn ghost" onclick={() => setMwStep(2)}>上一步</button>
-          <button class="btn primary" onclick={mwEnableGrowth} disabled={mwBusy || !mwGrowthReady}>{mwBusy ? '开启中…' : '确认并开启增长托管'}</button>
+          <button class="btn ghost" onclick={() => setMwStep(2)} disabled={mwBusy}>上一步</button>
+          <button class="btn primary" onclick={mwEnableGrowth} disabled={mwBusy || !mwGrowthReady}>{mwBusy ? '开启中…' : `确认开启 ${mwSites.length} 个站点`}</button>
         {/if}
       {/if}
     </footer>
@@ -22742,6 +22874,14 @@
   /* 概览条容器（托管仪表盘 / 定时任务顶部共用）：裸化的安静统计行——无底无框，
      左缘与下方卡片列表对齐；各站例外收进「待审」的 hover 弹层（.ss-pop-menu）。趋势小柱在各站卡片数据行里 */
   .md-board { display: flex; flex-direction: column; gap: 3px; margin: 0 0 12px; padding: 2px 0 4px; }
+  .md-batch-trigger { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; box-shadow: none; background: transparent; }
+  .md-batch-bar { display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;padding:3px 8px;margin:2px 0;background:var(--rail);border:1px solid var(--border);border-radius:6px;font-size:10.5px;line-height:1.3;color:var(--dim); }
+  .md-batch-bar label { display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap; }
+  .md-batch-bar input { width:12px;height:12px;margin:0; }
+  .md-batch-bar .btn { margin-left:auto;flex:none;min-height:20px;padding:2px 7px;border-width:1px;border-radius:5px;font-size:10px;line-height:1.3; }
+  .md-select { flex:none;align-self:flex-start;margin-top:7px;accent-color:var(--accent); }
+  .managed-card.off { opacity:1; }
+  .managed-card.off .task-body { opacity:.62; }
   /* 数据条（可复用）：每段=数字(13px/600/正文色)+标签(11px faint)，段间 1px 细竖线，状态段带 6px 色点 */
   .stat-strip { display: flex; align-items: center; flex-wrap: wrap; row-gap: 4px; }
   .ss-seg { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; }
