@@ -1,5 +1,8 @@
 mod acp;
 mod agent;
+mod api_agent;
+mod api_billing;
+mod api_profiles;
 mod editorial;
 mod brains;
 mod bridge;
@@ -23,6 +26,9 @@ mod scheduled;
 mod skills;
 mod ssh;
 mod sftp_transfer;
+mod sftp_drop;
+#[cfg(target_os = "macos")]
+mod sftp_drag_macos;
 mod static_server;
 mod tasks;
 mod task_outcome;
@@ -1671,6 +1677,84 @@ async fn gcms_site_deployment_save(
 #[tauri::command]
 async fn detect_brains() -> Result<brains::BrainsInfo, String> {
     Ok(brains::detect().await)
+}
+
+#[tauri::command]
+fn list_api_profiles(state: tauri::State<'_, AppState>) -> Result<Vec<api_profiles::ApiProfileView>, String> {
+    api_profiles::list(&state.data_dir)
+}
+
+fn api_profile_in_use(state: &AppState, id: &str) -> bool {
+    let brain = format!("api:{id}");
+    state.convos.list().iter().any(|c| c.brain == brain && c.status == "running")
+}
+
+#[tauri::command]
+fn save_api_profile(
+    state: tauri::State<'_, AppState>, profile: api_profiles::ApiProfileInput,
+    api_key: Option<String>, confirm_endpoint_change: Option<bool>,
+) -> Result<api_profiles::ApiProfileView, String> {
+    if profile.id.as_deref().is_some_and(|id| api_profile_in_use(&state, id)) {
+        return Err("该 API 连接有正在执行的会话，请停止后再编辑".into());
+    }
+    api_profiles::save(&state.data_dir, profile, api_key, confirm_endpoint_change.unwrap_or(false))
+}
+
+#[tauri::command]
+fn delete_api_profile(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    if api_profile_in_use(&state, &id) { return Err("该 API 连接有正在执行的会话，请停止后再移除".into()); }
+    // Keep conversations and task references. A missing profile fails explicitly;
+    // it must never silently redirect an existing task to another account.
+    api_profiles::delete(&state.data_dir, &id)
+}
+
+#[tauri::command]
+async fn list_api_models(state: tauri::State<'_, AppState>, id: String) -> Result<Vec<String>, String> {
+    api_profiles::list_models(&state.data_dir, &id).await
+}
+
+#[tauri::command]
+async fn test_api_profile(state: tauri::State<'_, AppState>, id: String) -> Result<api_profiles::ApiTestResult, String> {
+    api_profiles::test(&state.data_dir, &id).await
+}
+
+#[tauri::command]
+fn get_api_billing_settings(state: tauri::State<'_, AppState>, id: String) -> Result<api_billing::BillingSettings, String> {
+    api_billing::settings(&state.data_dir, &id)
+}
+
+#[tauri::command]
+fn save_api_billing_key(state: tauri::State<'_, AppState>, id: String, api_key: String) -> Result<api_billing::BillingSettings, String> {
+    api_billing::save_key(&state.data_dir, &id, api_key)
+}
+
+#[tauri::command]
+fn delete_api_billing_key(state: tauri::State<'_, AppState>, id: String) -> Result<api_billing::BillingSettings, String> {
+    api_billing::delete_key(&state.data_dir, &id)
+}
+
+#[tauri::command]
+async fn query_api_billing(state: tauri::State<'_, AppState>, id: String) -> Result<api_billing::BillingSnapshot, String> {
+    api_billing::query(&state.data_dir, &id).await
+}
+
+fn validate_executor(data_dir: &std::path::Path, brain: &str, model: &str) -> Result<(), String> {
+    if matches!(brain, "claude" | "codex" | "grok") { return Ok(()); }
+    let id = brain.strip_prefix("api:").ok_or("未知模型服务")?;
+    let profiles = api_profiles::list(data_dir)?;
+    let profile = profiles.iter().find(|p| p.profile.id == id).ok_or("API 连接已移除，请重新选择模型服务")?;
+    if !profile.profile.enabled { return Err("API 连接已停用".into()); }
+    if !profile.key_configured { return Err("请先配置该连接的 API Key".into()); }
+    if model.trim().is_empty() || !profile.profile.models.iter().any(|m| m == model) {
+        return Err("该模型不在 API 连接的模型列表中，请先添加模型 ID".into());
+    }
+    Ok(())
+}
+
+fn validate_executors(data_dir: &std::path::Path, brain: &str, model: &str, fallback_brain: &str, fallback_model: &str) -> Result<(), String> {
+    validate_executor(data_dir, brain, model)?;
+    if !fallback_brain.is_empty() { validate_executor(data_dir, fallback_brain, fallback_model)?; }
+    Ok(())
 }
 
 /// 验证 Cloudflare API Token 并返回可用账号 + 域名（UI 据此让用户选默认账号）。
@@ -4611,6 +4695,12 @@ fn set_conversation_model(
     conv_id: String,
     model: String,
 ) -> Result<Option<Conversation>, String> {
+    if let Some(c) = state.convos.get(&conv_id) {
+        if c.brain.starts_with("api:") && c.status == "running" {
+            return Err("上一轮还在进行中，请稍候再切换 API 模型".into());
+        }
+        validate_executor(&state.data_dir, &c.brain, &model)?;
+    }
     state.convos.mutate(&conv_id, now_secs(), move |c| {
         let changed = c.model != model;
         c.model = model;
@@ -4618,7 +4708,7 @@ fn set_conversation_model(
         // 「同厂商换档下一轮生效」对 claude 是空头支票。换模型就清 session_ref，
         // 下一条消息走 StartedFresh 重建路（新 session + 历史摘要），模型才真正切换。
         // codex/grok 的模型是逐轮配置下发，不受此坑影响，session 照留。
-        if changed && c.brain == "claude" {
+        if changed && (c.brain == "claude" || c.brain.starts_with("api:")) {
             c.session_ref = String::new();
         }
     })
@@ -4653,9 +4743,7 @@ fn set_conversation_brain_model(
     brain: String,
     model: String,
 ) -> Result<Option<Conversation>, String> {
-    if brain != "claude" && brain != "codex" && brain != "grok" {
-        return Err(format!("未知厂商：{brain}"));
-    }
+    validate_executor(&state.data_dir, &brain, &model)?;
     if let Some(c) = state.convos.get(&conv_id) {
         if c.status == "running" {
             return Err("上一轮还在进行中，请稍候".into());
@@ -4872,6 +4960,7 @@ fn save_task(
     first_run: i64,
     enabled: bool,
 ) -> Result<ScheduledTask, String> {
+    validate_executors(&state.data_dir, &brain, &model, &fallback_brain, &fallback_model)?;
     upsert_task(
         &state.conns,
         &state.tasks,
@@ -5217,6 +5306,9 @@ struct ManagedSettingsResult {
 fn managed_update_settings(
     state: tauri::State<'_, AppState>, conn_id: String, ids: Vec<String>, patch: managed::SettingsPatch,
 ) -> Result<Vec<ManagedSettingsResult>, String> {
+    for value in [&patch.primary, &patch.fallback].into_iter().flatten() {
+        if !value.brain.is_empty() { validate_executor(&state.data_dir, &value.brain, &value.model)?; }
+    }
     update_managed_settings(&state.managed, &state.tasks, &conn_id, ids, patch)
 }
 
@@ -5284,6 +5376,7 @@ fn managed_set_models(
     fallback_model: String,
     fallback_effort: String,
 ) -> Result<Option<managed::ManagedSite>, String> {
+    validate_executors(&state.data_dir, &brain, &model, &fallback_brain, &fallback_model)?;
     if brain.trim().is_empty() || model.trim().is_empty() {
         return Err("主模型不能为空".into());
     }
@@ -5391,6 +5484,7 @@ fn managed_enable(
     custom_audit_prompt: String,
     custom_report_prompt: String,
 ) -> Result<managed::ManagedSite, String> {
+    validate_executors(&state.data_dir, &brain, &model, &fallback_brain, &fallback_model)?;
     enable_managed(
         &state.conns,
         &state.tasks,
@@ -5646,6 +5740,7 @@ async fn managed_growth_enable(
     custom_audit_prompt: String,
     custom_report_prompt: String,
 ) -> Result<managed::ManagedSite, String> {
+    validate_executors(&state.data_dir, &brain, &model, &fallback_brain, &fallback_model)?;
     let site_slug = site_slug.trim().to_string();
     if site_slug.is_empty() {
         return Err("请选择要托管的站点".into());
@@ -7573,10 +7668,12 @@ fn user_msg(text: String, now: u64) -> Message {
         limit_reset: None,
     }
 }
-fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
+fn assistant_msg(res: &agent::TurnResult, now: u64, brain: &str) -> Message {
     Message {
         role: "assistant".into(),
-        text: if res.text.trim().is_empty() && !res.ok {
+        text: if brain.starts_with("api:") && !res.ok && !res.text.trim().is_empty() {
+            format!("执行未完成：{}\n\n以下为中断前的部分输出：\n{}", res.error, res.text)
+        } else if res.text.trim().is_empty() && !res.ok {
             res.error.clone()
         } else {
             res.text.clone()
@@ -7584,9 +7681,10 @@ fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
         tools: res.tools.clone(),
         ts: now,
         hidden: false,
+        // API 的部分输出不代表成功，失败必须保留错误状态。CLI 沿用原有规则：
         // 只有「失败且没产出内容」才标红（展示错误信息）；有正常回答就不标红——
         // CLI 有时退出码非 0 但回答是好的（如跑了 open 打开浏览器），不该把整段染红。
-        error: !res.ok && res.text.trim().is_empty(),
+        error: !res.ok && (res.text.trim().is_empty() || brain.starts_with("api:")),
         proposal: res.proposal.clone(),
         limit_reset: res.limit_reset,
     }
@@ -7608,7 +7706,7 @@ fn note_limit(data_dir: &std::path::Path, brain: &str, res: &agent::TurnResult) 
 fn apply_usage(c: &mut Conversation, res: &agent::TurnResult, data_dir: &std::path::Path) {
     if let Some(u) = &res.usage {
         let ctx = u.input + u.cache_read + u.cache_create;
-        c.ctx_tokens = if c.brain == "codex" { 0 } else { ctx };
+        c.ctx_tokens = if c.brain == "codex" || c.brain.starts_with("api:") { 0 } else { ctx };
         c.total_tokens += ctx + u.output; // 累计（每轮全量计入，反映实际处理量）
         usage::append(
             data_dir,
@@ -7659,13 +7757,10 @@ async fn create_conversation(
     data_dir: PathBuf,
     ssh: ssh::SshSessions,
 ) -> Result<Conversation, String> {
+    validate_executor(&data_dir, &brain, &model)?;
     let now = now_secs();
-    // 会话种子：claude 由我们指定 uuid（--session-id）；codex/grok 由 CLI 自己生成、首轮结果回填。
-    let session_seed = if brain == "claude" {
-        uuid::Uuid::new_v4().to_string()
-    } else {
-        String::new()
-    };
+    // API 提前保存引用：即使首轮工具执行时进程退出，也不能把下一轮当成全新任务重放。
+    let session_seed = fresh_session_seed(&brain);
     let is_workspace = task_type == "workspace";
     let is_skill = task_type == "skill";
     let is_local_workspace = is_workspace || is_skill;
@@ -7767,7 +7862,7 @@ async fn create_conversation(
         perm_mode: perm_mode.clone(),
         effort: effort.clone(),
         fast,
-        session_ref: String::new(),
+        session_ref: if brain.starts_with("api:") { session_seed.clone() } else { String::new() },
         title: title_from(&message),
         messages: vec![user_msg(message.trim().to_string(), now)],
         status: "running".into(),
@@ -7805,28 +7900,45 @@ async fn create_conversation(
         // Claude 首轮会预生成 --session-id；若 CLI 连进程都没启动，run_turn 的失败结果
         // 仍会带回这个种子。失败时绝不能落库，否则“重试”会拿幽灵 id 去 --resume，
         // 随后只能得到 `No conversation found with session ID`。
-        if session_ref_is_persistable(res.ok, &res.session_ref) {
+        if session_ref_is_persistable(&c.brain, res.ok, &res.session_ref) {
             c.session_ref = res.session_ref.clone();
         }
         c.status = "idle".into();
-        c.messages.push(assistant_msg(&res, now2));
+        c.messages.push(assistant_msg(&res, now2, &c.brain));
         apply_usage(c, &res, &data_dir);
         note_limit(&data_dir, &c.brain, &res);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
 
-fn session_ref_is_persistable(turn_ok: bool, session_ref: &str) -> bool {
+fn fresh_session_seed(brain: &str) -> String {
+    if brain.starts_with("api:") {
+        format!("api:{}", uuid::Uuid::new_v4())
+    } else if brain == "claude" {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn session_ref_is_persistable(brain: &str, turn_ok: bool, session_ref: &str) -> bool {
+    if brain.starts_with("api:") {
+        // API references are reserved before running, and transcripts precede tool execution.
+        // Even a missing transcript must fail closed, never silently start over after a crash.
+        return session_ref.strip_prefix("api:")
+            .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok());
+    }
     turn_ok && !session_ref.is_empty()
 }
 
 #[cfg(test)]
 mod conversation_session_tests {
-    use super::session_ref_is_persistable;
+    use super::{fresh_session_seed, session_ref_is_persistable};
 
     #[test]
     fn failed_first_turn_does_not_persist_preallocated_claude_session() {
         assert!(!session_ref_is_persistable(
+            "claude",
             false,
             "75739ec2-daa6-44c0-930c-30309ca88e45"
         ));
@@ -7834,8 +7946,70 @@ mod conversation_session_tests {
 
     #[test]
     fn successful_turn_requires_a_non_empty_session_reference() {
-        assert!(session_ref_is_persistable(true, "session-created-by-cli"));
-        assert!(!session_ref_is_persistable(true, ""));
+        assert!(session_ref_is_persistable("claude", true, "session-created-by-cli"));
+        assert!(!session_ref_is_persistable("claude", true, ""));
+    }
+
+    #[test]
+    fn api_failed_turn_keeps_persisted_history_but_not_a_cli_seed() {
+        let saved = "api:75739ec2-daa6-44c0-930c-30309ca88e45";
+        assert!(session_ref_is_persistable("api:profile", false, saved));
+        assert!(session_ref_is_persistable("api:profile", true, saved));
+        for invalid in ["", "api:invalid", "75739ec2-daa6-44c0-930c-30309ca88e45"] {
+            assert!(!session_ref_is_persistable("api:profile", false, invalid));
+        }
+        assert!(!session_ref_is_persistable("claude", false, saved));
+    }
+
+    #[test]
+    fn api_reserves_distinct_valid_refs_before_execution() {
+        let first = fresh_session_seed("api:profile");
+        assert!(session_ref_is_persistable("api:profile", false, &first));
+        assert_ne!(first, fresh_session_seed("api:profile"));
+        assert!(uuid::Uuid::parse_str(&fresh_session_seed("claude")).is_ok());
+        assert!(fresh_session_seed("codex").is_empty());
+        assert!(fresh_session_seed("grok").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod api_outcome_integration_tests {
+    use super::*;
+
+    fn partial_result() -> agent::TurnResult {
+        agent::TurnResult {
+            ok: false, text: "部分输出".repeat(200), tools: vec![],
+            error: "model unavailable: stream interrupted".into(),
+            session_ref: fresh_session_seed("api:profile"),
+            proposal: None, usage: None, limit_reset: None,
+        }
+    }
+
+    fn conversation(message: Message) -> Conversation {
+        serde_json::from_value(serde_json::json!({
+            "id":"c", "conn_id":"x", "conn_name":"", "site_slug":"s", "site_name":"",
+            "task_type":"free", "brain":"api:profile", "model":"model", "session_ref":"",
+            "title":"", "messages":[message], "status":"idle", "created_at":0, "updated_at":0
+        })).unwrap()
+    }
+
+    #[test]
+    fn partial_api_error_stays_failed_and_its_reason_survives_task_summary() {
+        let result = partial_result();
+        let message = assistant_msg(&result, 10, "api:profile");
+        assert!(message.error);
+        assert!(message.text.starts_with("执行未完成：model unavailable"));
+        let summary = task_outcome::failure_at(&conversation(message), 10).unwrap();
+        assert!(summary.contains("stream interrupted"));
+        assert!(!assistant_msg(&result, 10, "claude").error, "legacy CLI behavior is unchanged");
+    }
+
+    #[test]
+    fn api_fallback_is_allowed_only_before_any_tool_execution() {
+        let mut result = partial_result();
+        assert!(conversation_can_fallback(&conversation(assistant_msg(&result, 10, "api:profile"))));
+        result.tools.push(convo::ToolCall { label: "site_command".into(), detail: "write".into() });
+        assert!(!conversation_can_fallback(&conversation(assistant_msg(&result, 10, "api:profile"))));
     }
 }
 
@@ -8079,7 +8253,7 @@ async fn send_message(
     let now2 = now_secs();
     let updated = state.convos.mutate(&conv_id, now2, |c| {
         c.status = "idle".into();
-        c.messages.push(assistant_msg(&res, now2));
+        c.messages.push(assistant_msg(&res, now2, &c.brain));
         apply_usage(c, &res, &state.data_dir);
         note_limit(&state.data_dir, &c.brain, &res);
     })?;
@@ -8125,7 +8299,7 @@ async fn retry_turn(
     let now2 = now_secs();
     let updated = state.convos.mutate(&conv_id, now2, |c| {
         c.status = "idle".into();
-        c.messages.push(assistant_msg(&res, now2));
+        c.messages.push(assistant_msg(&res, now2, &c.brain));
         apply_usage(c, &res, &state.data_dir);
         note_limit(&state.data_dir, &c.brain, &res);
     })?;
@@ -8215,11 +8389,11 @@ async fn run_fresh_turn(
             "【会话已重建】以下是此前对话的记录，供你衔接上下文；项目/站点里的实际文件与内容以当前现状为准，先查看再动手：\n\n{recap}\n\n——\n【继续执行用户的最新请求】\n{last_user}"
         )
     };
-    let session_seed = if conv.brain == "claude" {
-        uuid::Uuid::new_v4().to_string()
-    } else {
-        String::new()
-    };
+    let session_seed = fresh_session_seed(&conv.brain);
+    if conv.brain.starts_with("api:") {
+        state.convos.mutate(&conv_id, now_secs(), |c| c.session_ref = session_seed.clone())?
+            .ok_or("会话丢失")?;
+    }
 
     let res = agent::run_turn(
         state.runs.clone(),
@@ -8244,12 +8418,12 @@ async fn run_fresh_turn(
 
     let now2 = now_secs();
     let updated = state.convos.mutate(&conv_id, now2, |c| {
-        // 只有这轮成功才把新 session 接上；失败保留旧 ref（反正都坏，避免半截会话顶掉）。
-        if session_ref_is_persistable(res.ok, &res.session_ref) {
+        // CLI 只接上成功会话；API 已落盘的失败历史也必须保留，避免重放已执行的工具。
+        if session_ref_is_persistable(&c.brain, res.ok, &res.session_ref) {
             c.session_ref = res.session_ref.clone();
         }
         c.status = "idle".into();
-        c.messages.push(assistant_msg(&res, now2));
+        c.messages.push(assistant_msg(&res, now2, &c.brain));
         apply_usage(c, &res, &state.data_dir);
         note_limit(&state.data_dir, &c.brain, &res);
     })?;
@@ -8681,6 +8855,7 @@ pub fn run() {
     apply_system_proxy_to_process();
 
     tauri::Builder::default()
+        .plugin(sftp_drop::plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -8731,6 +8906,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::Destroyed) {
+                sftp_transfer::cancel_owner(window.label());
+                sftp_drop::clear_owner(window.label());
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
                     api.prevent_close();
@@ -8789,6 +8968,15 @@ pub fn run() {
             gcms_site_deployment_get,
             gcms_site_deployment_save,
             detect_brains,
+            list_api_profiles,
+            save_api_profile,
+            delete_api_profile,
+            list_api_models,
+            test_api_profile,
+            get_api_billing_settings,
+            save_api_billing_key,
+            delete_api_billing_key,
+            query_api_billing,
             install_wrangler,
             install_claude,
             verify_cf_token,
@@ -8846,8 +9034,13 @@ pub fn run() {
             sftp_transfer::sftp_download_entry,
             sftp_transfer::sftp_cancel_download,
             sftp_transfer::sftp_start_drag,
+            sftp_transfer::sftp_drag_download,
+            sftp_drop::sftp_capture_local_drop,
+            sftp_drop::sftp_consume_local_drop,
+            sftp_drop::sftp_discard_local_drop,
             sftp_download,
             sftp_upload,
+            sftp_transfer::sftp_upload_entry,
             save_attachment,
             read_workdir_image,
             resolve_workdir_file,

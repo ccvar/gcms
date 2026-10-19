@@ -103,7 +103,7 @@ test('pane actions render conversation-bound file and approval handlers',()=>{
 });
 
 test('conversation header keeps model and site identity on one compact row',()=>{
-  assert.match(source,/class="conversation-head-title"[\s\S]*?<BrainIcon brain=\{activeConv\?\.brain\?\?'claude'\}/);
+  assert.match(source,/class="conversation-head-title"[\s\S]*?<BrainIcon brain=\{modelIcon\(activeConv\?\.brain\?\?'claude'\)\}/);
   assert.match(source,/class="th-open conversation-site-link"[\s\S]*?<SiteFav src=\{headerSiteIcon\}/);
   assert.doesNotMatch(slice('{#snippet conversationHeader', '{/snippet}'),/<small/);
   assert.match(source,/\.conversation-head-title>span:last-child\{[^}]*text-overflow:ellipsis;[^}]*white-space:nowrap/);
@@ -120,7 +120,7 @@ test('split canvas always fits its viewport instead of creating page-level scrol
 });
 
 test('drag feedback keeps the conversation ghost and restores the blurred split target',()=>{
-  assert.match(source,/class="conversation-drag-ghost"[\s\S]*?<BrainIcon brain=\{dragConversation\.brain\}/);
+  assert.match(source,/class="conversation-drag-ghost"[\s\S]*?<BrainIcon brain=\{modelIcon\(dragConversation\.brain\)\}/);
   assert.match(source,/splitDragPoint=\{x:event\.clientX,y:event\.clientY\}/);
   assert.match(canvasSource,/const next=splitPane\(layout,destination\.id,dragConversation,destination\.edge/);
   assert.match(canvasSource,/class="drop-preview"[\s\S]*?<span>分屏视图<\/span>/);

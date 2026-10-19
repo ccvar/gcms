@@ -2027,6 +2027,18 @@ pub async fn run_turn(
     // claude 和 grok 吃同一个 plugin 目录格式；codex 没有 --plugin-dir，走 design_prompt 兜底。
     let plugin_dir =
         (conn.kind == "cloudflare").then(|| crate::tools::design_plugin_dir(&data_dir));
+    // Native API services are independent of installed CLI clients. Never fall through
+    // to Claude or silently change protocol/model after a failed API request.
+    if let Some(profile_id) = brain.strip_prefix("api:") {
+        return crate::api_agent::run_turn(
+            registry, conn, work_dir, profile_id.to_string(), model, mode,
+            selected_skill_ids, data_dir, lease.as_ref(), session_ref, is_first,
+            system, message, turn_id, channel, api_key,
+        ).await;
+    }
+    if !matches!(brain.as_str(), "claude" | "codex" | "grok") {
+        return failed_turn_result(&session_ref, "不支持的模型服务，请重新选择".into(), &channel);
+    }
     // grok 走 ACP（JSON-RPC over stdio）——协议不同族，整轮交给 acp 模块（事件/结果契约一致）。
     if brain == "grok" {
         return crate::acp::run_turn(

@@ -194,6 +194,19 @@ pub fn get_named_secret(account: &str) -> Result<String, String> {
     read_secret(account)?.ok_or_else(|| "credential read: NoEntry".to_string())
 }
 
+/// New high-privilege credentials must observe changes from other Pilot
+/// processes. Read only the authoritative vault: neither a process-local cache
+/// nor a legacy recovery copy may resurrect a removed billing credential.
+pub fn get_named_secret_fresh(account: &str) -> Result<String, String> {
+    if account == VAULT_ACCOUNT {
+        return Err("凭据 account 与内部保险库冲突".into());
+    }
+    read_vault_from_store()?
+        .secrets
+        .remove(account)
+        .ok_or_else(|| "credential read: NoEntry".to_string())
+}
+
 pub fn delete_named_secret(account: &str) -> Result<(), String> {
     remove_secret(account)
 }

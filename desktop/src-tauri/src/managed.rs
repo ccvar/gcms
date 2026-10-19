@@ -502,6 +502,7 @@ impl SettingsPatch {
         for (model, optional) in [(&self.primary, false), (&self.fallback, true)] {
             if let Some(value) = model {
                 if !(matches!(value.brain.as_str(), "claude" | "codex" | "grok")
+                    || value.brain.strip_prefix("api:").is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
                     || optional && value.brain.is_empty() && value.model.is_empty() && value.effort.is_empty()) {
                     return Err("模型厂商无效".into());
                 }

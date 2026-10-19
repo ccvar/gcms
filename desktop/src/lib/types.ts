@@ -475,7 +475,9 @@ export type ImportOutcome =
   | { status: 'upgraded'; connection: Connection }
   | { status: 'needs_key'; api_base: string };
 
-export type Brain = 'claude' | 'codex' | 'grok';
+export type LocalBrain = 'claude' | 'codex' | 'grok';
+/** API profiles have stable identities independent of the model and site connection. */
+export type Brain = LocalBrain | `api:${string}`;
 
 export interface BrainStatus {
   found: boolean;

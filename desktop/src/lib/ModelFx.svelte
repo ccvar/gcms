@@ -21,7 +21,7 @@
 
   /** Supported Opus models: https://code.claude.com/docs/en/fast-mode */
   const FAST_OK = ['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8'];
-  const fastable = $derived(FAST_OK.some((m) => value.endsWith('::' + m) || value === m));
+  const fastable = $derived(!value.startsWith('api:') && FAST_OK.some((m) => value.endsWith('::' + m) || value === m));
 
   type Stop = { v: string; l: string; d: string };
   const BASE_STOPS: Stop[] = [
@@ -62,6 +62,9 @@
   // Codex subscription-channel capabilities (models_cache), not Responses API tiers.
   const CODEX_LUNA_STOPS = CODEX_ASTRA_STOPS.filter((s) => s.v !== 'ultra');
   const brain = $derived(value.includes('::') ? value.slice(0, value.indexOf('::')) : '');
+  // API model IDs do not imply a shared reasoning schema. Keep vendor defaults
+  // until a profile declares a tested capability instead of sending CLI flags.
+  const apiModel = $derived(brain.startsWith('api:'));
   const model = $derived(value.includes('::') ? value.slice(value.indexOf('::') + 2) : value);
   const brainName = $derived(brain === 'claude' ? 'Claude' : brain === 'grok' ? 'Grok' : brain === 'codex' ? 'Codex' : '模型');
   const stops = $derived(brain === 'claude' ? CLAUDE_STOPS : brain === 'grok' ? GROK_STOPS
@@ -158,7 +161,7 @@
   <button type="button" class="fx-trigger" class:open onclick={toggle}>
     {#if current?.icon}<BrainIcon brain={current.icon} size={13} />{/if}
     <span class="fx-label">{current?.label ?? (value || '模型')}</span>
-    {#if idx > 0}<span class="fx-eff">{stops[idx].l}</span>{/if}
+    {#if apiModel}<span class="fx-eff">API</span>{:else if idx > 0}<span class="fx-eff">{stops[idx].l}</span>{/if}
     <svg class="fx-chev" width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
   </button>
   {#if open}
@@ -173,6 +176,7 @@
           </button>
         {/each}
       </div>
+      {#if !apiModel}
       <div class="fx-div"></div>
       <div class="fx-sec">推理强度<span class="fx-sec-sub">{stops[liveIdx].l} · {brainName} {stops[liveIdx].v || 'auto'}{stops[liveIdx].d ? ' · ' + stops[liveIdx].d : ''}</span></div>
       <div class="fx-ends"><span>更快</span><span>更缜密</span></div>
@@ -193,6 +197,10 @@
           <button type="button" class:on={i === liveIdx} title={`${brainName} ${st.v || 'auto'}：${st.d}`} onclick={() => setIdx(i)}>{st.l}</button>
         {/each}
       </div>
+      {:else}
+        <div class="fx-div"></div>
+        <div class="fx-api-note">使用 API 模型默认推理配置 · 用量由服务商独立计费</div>
+      {/if}
       {#if fastable}
         <div class="fx-div"></div>
         <button type="button" class="fx-fast" class:on={fast && fastOk} disabled={!fastOk} onclick={() => onfast(!fast)}>
@@ -206,6 +214,7 @@
 
 <style>
   .fx { position: relative; display: inline-flex; }
+  .fx-api-note { flex: none; padding: 3px 8px 5px; font-size: 11px; line-height: 1.5; color: var(--dim, #6b675f); }
   .fx-fast { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; }
   .fx-fast:hover:not(:disabled) { background: #f1efe9; }
   .fx-fast:disabled { cursor: default; }

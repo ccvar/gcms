@@ -1,6 +1,8 @@
 <script lang="ts">
   import ConversationCanvas from '$lib/ConversationCanvas.svelte';
   import SettingsIcon from '$lib/SettingsIcon.svelte';
+  import SftpTransfers from '$lib/SftpTransfers.svelte';
+  import { SFTP_TRANSFER_HISTORY_KEY, createTransfer, addTransfer, updateTransfer, finishTransfer, readTransferHistory, serializeTransferHistory, isTransferActive, type TransferRecord, type TransferUpdate, type TransferFinalStatus } from '$lib/sftpTransfers';
   import SidebarConversationList from '$lib/SidebarConversationList.svelte';
   import { pane, leaves, splitPane, removePane, replacePane, dropEdge, outerDropEdge, type Layout, type Edge } from '$lib/conversationLayout';
   import { onDestroy, tick, untrack } from 'svelte';
@@ -15,6 +17,8 @@
   import { check as checkUpdate } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
   import BrainIcon from '$lib/BrainIcon.svelte';
+  import ApiServices from '$lib/ApiServices.svelte';
+  import type { ApiProfile } from '$lib/apiProfiles';
   import SiteMark from '$lib/SiteMark.svelte';
   import SiteFav from '$lib/SiteFav.svelte';
   import SkillFav from '$lib/SkillFav.svelte';
@@ -33,6 +37,7 @@
   } from '$lib/types';
   import { loadPrefs, savePrefs } from '$lib/defaults';
   import { copyTargetName, fitFileMenu } from '$lib/sftpFiles';
+  import { resolveSftpDropTarget, localFileBasename, type SftpDropTarget } from '$lib/sftpDrop';
   import FileCodeEditor from '$lib/FileCodeEditor.svelte';
   import { inspectEditorText, serializeEditorText } from '$lib/fileEditor';
   import { MANAGED_PLAN_TIMEOUT_SECONDS, canApplyPlan, planElapsed, type PlanRun } from '$lib/managedPlan';
@@ -122,6 +127,20 @@
   let sitesGlobalMenuKind = $state<'google' | 'telegram' | 'cloudflare' | null>(null);
   let sitesGlobalMenuEl = $state<HTMLDivElement | null>(null);
   let brains = $state<BrainsInfo | null>(null);
+  let apiProfiles = $state<ApiProfile[]>([]);
+  let apiProfilesLoaded = $state(false);
+  function apiProfile(brain: string): ApiProfile | undefined {
+    return brain.startsWith('api:') ? apiProfiles.find((p) => p.id === brain.slice(4)) : undefined;
+  }
+  function modelIcon(brain: string): string {
+    const p = apiProfile(brain);
+    return p ? (p.protocol === 'anthropic_messages' ? 'claude' : p.protocol === 'openai_responses' ? 'openai' : 'api') : brain;
+  }
+  async function refreshApiProfiles() {
+    try { apiProfiles = await invoke<ApiProfile[]>('list_api_profiles'); }
+    catch (e) { say(`读取 API 服务失败：${String(e)}`, 'err'); }
+    finally { apiProfilesLoaded = true; }
+  }
   let importBusy = $state(false);
   let setupOpen = $state(false);
   let gcmsInstallOpen = $state(false);
@@ -4468,7 +4487,7 @@
   }
 
   /** 全部厂商（顺序即下拉展示顺序）。新增厂商在此登记，brainUsable/brainLabel/模型档随之生效。 */
-  const ALL_BRAINS: Brain[] = ['claude', 'codex', 'grok'];
+  const ALL_BRAINS = $derived<Brain[]>(['claude', 'codex', 'grok', ...apiProfiles.map((p): Brain => `api:${p.id}`)]);
   /** 第一个可用（已装已登录）的厂商；全不可用时回退 claude（保持旧行为）。 */
   function firstUsableBrain(): Brain { return ALL_BRAINS.find((b) => brainUsable(b)) ?? 'claude'; }
 
@@ -4785,12 +4804,12 @@
   let threadModel = $state('');
   async function persistThreadModel(m: string) {
     if (!activeConv || m === activeConv.model) return;
-    const wasClaude = activeConv.brain === 'claude';
+    const resetsSession = activeConv.brain === 'claude' || activeConv.brain.startsWith('api:');
     try {
       const u = await invoke<Conversation | null>('set_conversation_model', { convId: activeConv.id, model: m });
       if (u && activeConvId === u.id) activeConv = u;
       // claude 的 --resume 无视 --model（后端因此清了 session）：如实告知生效方式。
-      if (wasClaude) say('模型已切换：下一条消息将以历史摘要重建会话后用新模型跑');
+      if (resetsSession) say('模型已切换：下一条消息将以历史摘要重建会话后用新模型跑');
     } catch (e) { say(String(e), 'err'); }
   }
   // 会话内模型面板：三家厂商的模型都列出（值编码 "<brain>::<model>"，同启动器 comboOpts；行首图标区分）。
@@ -4802,15 +4821,15 @@
     for (const b of order) {
       // 当前厂商永远可选（会话已经在用它了，灰掉只会让触发器显示成一个选不中的项）。
       // 远程连接下的 codex 不置灰、只挂注记：它能用，只是那道闸是打折的（完整说法见 permTipFor）。
-      const usable = b === cur || brainUsable(b);
-      const note = isCodexSsh(b, conversationConnection(c)?.kind==='ssh') ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      const usable = b.startsWith('api:') ? brainUsable(b) : b === cur || brainUsable(b);
+      const note = isCodexSsh(b, conversationConnection(c)?.kind==='ssh') ? CODEX_SSH_NOTE : brainAvailability(b);
       for (const m of launcherModelOpts(b)) {
-        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
+        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: modelIcon(b), disabled: !usable });
       }
     }
     // 会话当前模型不在清单里（比如自定义 ID 事后被删）：补一条，触发器别显示成裸编码值。
     const curVal = `${cur}::${c?.model}`;
-    if (!out.some((o) => o.value === curVal)) out.unshift({ value: curVal, label: c?.model || '模型', sub: '当前会话', icon: cur });
+    if (!out.some((o) => o.value === curVal)) out.unshift({ value: curVal, label: c?.model || '模型', sub: brainAvailability(cur) || '当前会话', icon: modelIcon(cur), disabled: cur.startsWith('api:') && !brainUsable(cur) });
     return out;
   }
   const threadComboOpts = $derived(conversationModelOptions(activeConv));
@@ -5621,7 +5640,7 @@
     mwOpen = true; mwMode = ''; mwStep = 1; mwPlan = ''; mwLimit = 3; mwGenBusy = false; mwBusy = false;
     mwSite = sites.find((s) => !managedOfConn.some((m) => m.site_slug === s.slug))?.slug ?? '';
     mwSites=mwSite?[mwSite]:[]; mwConnId=activeConnId; mwSiteDrafts={}; mwCreateError=''; mwCreateProgress='';
-    mwBrain = brainUsable(prefs.brain) ? prefs.brain : firstUsableBrain();
+    mwBrain = prefs.brain.startsWith('api:') || brainUsable(prefs.brain) ? prefs.brain : firstUsableBrain();
     mwModel = mwBrain === prefs.brain && isLauncherModel(mwBrain, prefs.model) ? prefs.model : defaultModelFor(mwBrain);
     mwEffort = mwBrain === prefs.brain ? (prefs.effort ?? '') : '';
     const fallback = ALL_BRAINS.find((brain) => brain !== mwBrain && brainUsable(brain)) ?? firstUsableBrain();
@@ -6241,7 +6260,9 @@
   let lTask = $state<TaskType>(prefs.taskType);
   let lBrain = $state<Brain>(prefs.brain);
   let lModel = $state(prefs.model);
-  let lPerm = $state<string>(prefs.taskType === 'sitebuild' && (prefs.perm ?? 'full') === 'full' ? 'auto' : (prefs.perm ?? 'full'));
+  // 自由对话默认全自动；已有会话继续读取各自保存的 perm_mode。
+  let lPerm = $state<string>(prefs.taskType === 'workspace' ? 'full'
+    : prefs.taskType === 'sitebuild' && (prefs.perm ?? 'full') === 'full' ? 'auto' : (prefs.perm ?? 'full'));
   let lEffort = $state<string>(prefs.effort ?? '');
   /** fast 模式。只有 Opus 5.5 / Opus 5 / Opus 4.8 支持 —— 换到别的模型必须自动落下，
    *  否则会留下一个「显示开着、对该模型其实无效」的状态，比关着更误导。 */
@@ -6497,9 +6518,9 @@
     const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
     for (const b of ALL_BRAINS) {
       const usable = brainUsable(b);
-      const note = isCodexSsh(b, isSshConn) ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      const note = isCodexSsh(b, isSshConn) ? CODEX_SSH_NOTE : brainAvailability(b);
       for (const m of launcherModelOpts(b)) {
-        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
+        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: modelIcon(b), disabled: !usable });
       }
     }
     return out;
@@ -6517,6 +6538,7 @@
     if (i < 0) return;
     lBrain = v.slice(0, i) as Brain;
     lModel = v.slice(i + 2);
+    if (lBrain.startsWith('api:')) { lEffort = ''; lFast = false; }
   }
 
   // 权限档位按风险给下拉文字上色：自动=警告色、全自动(全程不拦)=危险色，计划/询问保持中性。
@@ -6607,7 +6629,7 @@
   let customOpen = $state<Record<string, boolean>>({ claude: false, codex: false, grok: false });
   /** 账号行（邮箱+重新绑定）默认收起：多数时候不需要看，展开才见。 */
   let acctOpen = $state<Record<string, boolean>>({ claude: false, codex: false, grok: false });
-  function customsOf(b: string): string[] { return (b === 'codex' ? prefs.customCodexIds : b === 'grok' ? prefs.customGrokIds : prefs.customClaudeIds) ?? []; }
+  function customsOf(b: string): string[] { return b.startsWith('api:') ? [] : (b === 'codex' ? prefs.customCodexIds : b === 'grok' ? prefs.customGrokIds : prefs.customClaudeIds) ?? []; }
   function addCustom(b: string) {
     const v = (customDraft[b] ?? '').trim();
     if (!v) return;
@@ -6631,9 +6653,9 @@
   // 首次识别出本地 CLI 后：若默认厂商不可用（只装/登录了另一个），把 composer 默认厂商切到可用的那个；之后尊重手动选择。
   let brainAutoSet = false;
   $effect(() => {
-    if (!brains || brainAutoSet) return;
+    if (!brains || !apiProfilesLoaded || brainAutoSet) return;
     brainAutoSet = true;
-    if (!brainUsable(lBrain)) lBrain = brains && ALL_BRAINS.some((b) => brainUsable(b)) ? firstUsableBrain() : lBrain;
+    if (!lBrain.startsWith('api:') && !brainUsable(lBrain)) lBrain = brains && ALL_BRAINS.some((b) => brainUsable(b)) ? firstUsableBrain() : lBrain;
   });
   // 自定义模型输入框的占位示例，按当前引擎给不同提示。
   // ---------- composer 自动撑高 ----------
@@ -6918,6 +6940,7 @@
   //   「快满了」提示、自动压缩时机全部按错误的窗口算，而且不报错、只是数字悄悄不对。
   //   `-5` 这一支（sonnet-5 / opus-5 / fable-5）没有第三段版本号，别套 `-4-[6-9]` 那种写法。
   function ctxLimit(brain: string, model = ''): number {
+    if (brain.startsWith('api:')) return 0; // Capability is not inferable from a custom model ID.
     if (brain === 'codex') return 272000;
     if (brain === 'grok') return 500000;
     const id = (model.trim() || 'sonnet').toLowerCase();
@@ -7134,8 +7157,23 @@
     return () => document.removeEventListener('keydown', onKey);
   });
   function say(m: string, k: 'ok' | 'err' = 'ok', ms = 0) { flash = m; flashKind = k; setTimeout(() => (flash = ''), ms || (k === 'err' ? 8000 : 4000)); }
-  function brainUsable(b: Brain): boolean { const s = b === 'claude' ? brains?.claude : b === 'grok' ? brains?.grok : brains?.codex; return !!s && s.found && s.logged_in !== false; }
+  function brainUsable(b: Brain): boolean {
+    if (b.startsWith('api:')) { const p = apiProfile(b); return !!p?.enabled && p.key_configured && p.models.length > 0; }
+    const s = b === 'claude' ? brains?.claude : b === 'grok' ? brains?.grok : brains?.codex;
+    return !!s && s.found && s.logged_in !== false;
+  }
+  function brainAvailability(b: string): string {
+    if (b.startsWith('api:')) {
+      const p = apiProfile(b);
+      return !apiProfilesLoaded ? '正在读取 API 连接' : !p ? 'API 连接已移除' : !p.enabled ? 'API 连接已停用' : !p.key_configured ? '未配置 API Key' : !p.models.length ? '尚未添加 API 模型' : `API · ${p.name}`;
+    }
+    const status = b === 'claude' ? brains?.claude : b === 'grok' ? brains?.grok : brains?.codex;
+    return !status?.found ? '未安装' : status.logged_in === false ? '未登录' : '本地客户端';
+  }
   function hostOf(u: string): string { try { return new URL(u).host; } catch { return u; } }
+  function brainSetupHint(b: Brain): string {
+    return b.startsWith('api:') ? `${brainAvailability(b)}，请在设置的「API 服务」中检查配置。` : '所选厂商未就绪，点左下角设置里「去授权」。';
+  }
 
   // 从对话里认出这个项目已部署的线上地址（AI 部署完都会说「访问 https://xxx」）。
   // 优先自定义域名，其次 *.pages.dev；忽略 localhost / CDN / 文档等无关链接。
@@ -8371,6 +8409,7 @@
     void refreshConns();
     if (!isThemeWindow) {
       void refreshBrains();
+      void refreshApiProfiles();
       void refreshConvos();
     }
   });
@@ -9357,8 +9396,8 @@
     if (task === 'workspace') {
       lSite = '';
       lSites = [];
-      // 自由对话可能接入任意本地目录，默认保留逐次确认边界。
-      if (lPerm === 'full') lPerm = 'ask';
+      // 进入自由对话使用全自动默认值，不继承建站等入口的自动/询问档位。
+      lPerm = 'full';
     } else if (task === 'sitebuild' && activeConn?.kind === 'gcms') {
       if (lSite === '__multi__' || !sites.some((site) => site.slug === lSite)) lSite = sites[0]?.slug ?? '';
       lSites = [];
@@ -9954,10 +9993,109 @@
   let sftpXfer = $state(''); // 上传/下载进行中的提示文案
   type DownloadProgress = { phase: string; bytes: number; total_bytes: number; files: number; total_files: number; skipped: number };
   type DownloadResult = { path: string; drag_id: string | null; skipped: number };
-  let sftpDownloadTask = $state<null | { id: string; name: string; started: boolean; cancelling: boolean; progress: DownloadProgress | null }>(null);
-  let sftpDragReady = $state<null | { id: string; connId: string; remote: string; name: string; size: number; mtime: number }>(null);
+  let sftpDownloadTask = $state<null | { id: string; name: string; drag: boolean; started: boolean; cancelling: boolean; progress: DownloadProgress | null }>(null);
+  let sftpUploadTask = $state<null | { id: string; started: boolean; cancelling: boolean }>(null);
   let sftpNativeDragging = $state(false);
+  type SftpDragEvent = { phase: 'dragging' | 'dropped' | 'completed' | 'cancelled' | 'error'; path?: string; error?: string };
+  const sftpHistoryKey = `${SFTP_TRANSFER_HISTORY_KEY}:${pilotWindowLabel}`;
+  let sftpTransfers = $state<TransferRecord[]>(loadSftpTransfers());
+  let sftpHistoryTimer: ReturnType<typeof setTimeout> | undefined;
+  const sftpCancellableIds = $derived([sftpDownloadTask, sftpUploadTask].filter(task => task?.started).map(task => task!.id));
+  function loadSftpTransfers(): TransferRecord[] {
+    try { return readTransferHistory(localStorage.getItem(sftpHistoryKey)); } catch { return []; }
+  }
+  function persistSftpTransfers(immediate = false) {
+    const save = () => {
+      sftpHistoryTimer = undefined;
+      try { localStorage.setItem(sftpHistoryKey, serializeTransferHistory(sftpTransfers)); } catch { /* Storage may be unavailable or full. */ }
+    };
+    if (immediate) { clearTimeout(sftpHistoryTimer); save(); }
+    else if (!sftpHistoryTimer) sftpHistoryTimer = setTimeout(save, 250);
+  }
+  onDestroy(() => { clearTimeout(sftpHistoryTimer); persistSftpTransfers(true); });
+  function addSftpTransfer(id: string, name: string, direction: 'upload' | 'download', connId: string, remotePath: string, localPath?: string, phase = 'connecting') {
+    const conn = conns.find(c => c.id === connId);
+    sftpTransfers = addTransfer(sftpTransfers, createTransfer({ id, name, direction, connId, connectionName: conn?.remark?.trim() || conn?.name || '远程连接', remotePath, localPath, phase, status: phase === 'dragging' ? 'queued' : 'running' }));
+    persistSftpTransfers(true);
+  }
+  function updateSftpTransfer(id: string, patch: TransferUpdate) {
+    sftpTransfers = updateTransfer(sftpTransfers, id, patch);
+    persistSftpTransfers();
+  }
+  function progressSftpTransfer(id: string, p: DownloadProgress) {
+    updateSftpTransfer(id, { status: 'running', phase: p.phase, bytes: p.bytes, totalBytes: p.total_bytes, files: p.files, totalFiles: p.total_files });
+  }
+  function finishSftpTransfer(id: string, status: TransferFinalStatus, patch: TransferUpdate = {}) {
+    sftpTransfers = finishTransfer(sftpTransfers, id, status, patch);
+    persistSftpTransfers(true);
+  }
+  function clearSftpTransfers() { sftpTransfers = sftpTransfers.filter(isTransferActive); persistSftpTransfers(true); }
+  async function revealSftpTransfer(record: TransferRecord) {
+    if (!record.localPath || record.status !== 'completed' || record.direction !== 'download') return;
+    try { await revealItemInDir(record.localPath); } catch (e) { say(String(e), 'err'); }
+  }
+  async function cancelSftpTransfer(id: string) {
+    if (sftpDownloadTask?.id === id) return cancelSftpDownload();
+    if (sftpUploadTask?.id !== id || !sftpUploadTask.started || sftpUploadTask.cancelling) return;
+    sftpUploadTask = { ...sftpUploadTask, cancelling: true };
+    updateSftpTransfer(id, { cancelling: true });
+    try { await invoke('sftp_cancel_download', { transferId: id }); }
+    catch (e) {
+      if (sftpUploadTask?.id === id) sftpUploadTask = { ...sftpUploadTask, cancelling: false };
+      updateSftpTransfer(id, { cancelling: false });
+      say(String(e), 'err');
+    }
+  }
   let sftpFileOver = $state(false);
+  let sftpDropTarget = $state<SftpDropTarget | null>(null);
+  type LocalDropEntry = { name: string; size: number; mtime: number; directory: boolean | null };
+  type LocalDropCapture = { token: string; count: number };
+  type LocalDropProbe = { capture: Promise<LocalDropCapture | null>; entries: LocalDropEntry[] };
+  let sftpDropCapture: Promise<LocalDropCapture | null> | null = null;
+  function beginSftpLocalDrop() {
+    if (!isMac || sftpDropCapture) return;
+    // Native code binds this one-use token to a real drag sequence and window,
+    // never to a stale drag pasteboard or the general clipboard.
+    const capture = invoke<LocalDropCapture>('sftp_capture_local_drop');
+    // A hover can be abandoned without a drop. Suppress an unhandled rejection
+    // here, but retain the rejection so an accepted drop fails closed.
+    void capture.catch(() => {});
+    sftpDropCapture = capture;
+  }
+  function discardSftpLocalDrop() {
+    const capture = sftpDropCapture;
+    sftpDropCapture = null;
+    if (capture) void capture.then(result => {
+      if (result) void invoke('sftp_discard_local_drop', { token: result.token }).catch(() => {});
+    }).catch(() => {});
+  }
+  $effect(() => {
+    // Invalidate a hover when its panel, connection or directory goes away.
+    void view; void activeConnId; void wb.files; void sftpPath;
+    return () => {
+      sftpFileOver = false; sftpDropTarget = null;
+      discardSftpLocalDrop();
+    };
+  });
+  function sftpDropTargetAt(e: DragEvent): SftpDropTarget | null {
+    const element = e.target instanceof Element ? e.target : null;
+    const path = element?.closest<HTMLElement>('[data-sftp-drop-path]')?.dataset.sftpDropPath;
+    const hoveredRow = path ? sftpRows.find(row => row.path === path) : undefined;
+    const dir = hoveredRow?.dir && !hoveredRow.link ? hoveredRow.path : sftpPath;
+    return resolveSftpDropTarget({ connId: sftpConnId, remoteDir: sftpPath, busy: sftpBusy,
+      transferring: !!sftpXfer, nativeDragging: sftpNativeDragging,
+      insidePanel: !!element && (e.currentTarget as HTMLElement).contains(element), hoveredRow,
+      targetDeleting: isSftpDeleting(dir) });
+  }
+  function localDropEntries(data: DataTransfer, files: File[]): LocalDropEntry[] {
+    // Read protected drag items synchronously, before any IPC/await clears them.
+    const items = Array.from(data.items).filter(item => item.kind === 'file');
+    return files.map((file, index) => {
+      let directory: boolean | null = null;
+      try { const entry = items[index]?.webkitGetAsEntry?.(); if (entry) directory = entry.isDirectory; } catch { /* Non-filesystem drag. */ }
+      return { name: file.name, size: file.size, mtime: file.lastModified, directory };
+    });
+  }
   let sftpClipboard = $state<null | { connId: string; path: string; name: string; dir: boolean }>(null);
   // connId + path：切换服务器时，旧服务器仍在进行的删除不会误伤当前列表状态。
   let sftpDeleting = $state(new Set<string>());
@@ -10055,6 +10193,7 @@
     if (sftpPath) walk(sftpPath, 0);
     return out;
   });
+  const sftpSelectedRow = $derived(sftpRows.find((row) => row.path === sftpSel));
   /** 读一个目录的孩子进缓存。force=true 时无视缓存重读（改动后刷新用）。 */
   async function loadDir(path: string, force = false): Promise<boolean> {
     const id = sftpConnId;
@@ -10114,7 +10253,6 @@
   /** 刷新：重读当前展开着的每一层，**保留展开状态**（sftpGo 是「换根」，会把整棵树收起来）。 */
   async function sftpRefresh() {
     if (!sftpPath || sftpBusy) return;
-    sftpDragReady = null; // 刷新后重新下载，避免把旧快照当成远端最新内容。
     sftpBusy = true; sftpErr = '';
     try {
       const dirs = [sftpPath, ...sftpOpenDirs];
@@ -10315,139 +10453,234 @@
       sftpDeleting = next;
     }
   }
-  async function sftpDownload(r: SftpRow, archive = false, prepareDrag = false) {
-    if (sftpXfer) return;
+  function sftpDownloadSelected() {
+    if (sftpBusy || sftpXfer || sftpNativeDragging) return;
+    const row = sftpRows.find((row) => row.path === sftpSel);
+    if (row && !isSftpDeleting(row.path)) void sftpDownload(row);
+  }
+  async function sftpDownload(r: SftpRow, archive = false) {
+    if (sftpBusy || sftpXfer || sftpNativeDragging || isSftpDeleting(r.path)) return;
     const connId = sftpConnId;
     const directory = r.dir && !r.link;
+    fctxMenu = null;
+    sftpSel = r.path;
     sftpXfer = `选择 ${r.name} 的保存位置…`;
+    let transferId = '';
     try {
       let local: string | null = null;
-      if (!prepareDrag) {
-        if (directory && !archive) {
-          const picked = await open({ directory: true, multiple: false, title: `选择「${r.name}」的本地保存目录` });
-          local = typeof picked === 'string' ? picked : null;
-        } else {
-          local = await saveDialog({ defaultPath: archive ? `${r.name}.tar.gz` : r.name, title: `下载 ${r.name}（同名文件不会覆盖）` });
-        }
-        if (!local) return;
-      } else { sftpDragReady = null; }
+      if (directory && !archive) {
+        const picked = await open({ directory: true, multiple: false, title: `选择「${r.name}」的本地保存目录` });
+        local = typeof picked === 'string' ? picked : null;
+      } else {
+        local = await saveDialog({ defaultPath: archive ? `${r.name}.tar.gz` : r.name, title: `下载 ${r.name}（同名文件不会覆盖）` });
+      }
+      if (!local) return;
       const id = crypto.randomUUID();
-      sftpDownloadTask = { id, name: r.name, started: false, cancelling: false, progress: null };
-      sftpXfer = `${prepareDrag ? '准备拖出' : '下载'} ${r.name}…`;
+      transferId = id;
+      addSftpTransfer(id, r.name, 'download', connId, r.path);
+      sftpDownloadTask = { id, name: r.name, drag: false, started: false, cancelling: false, progress: null };
+      sftpXfer = `下载 ${r.name}…`;
       const onProgress = new Channel<DownloadProgress>();
       onProgress.onmessage = (progress) => {
         if (sftpDownloadTask?.id === id) sftpDownloadTask = { ...sftpDownloadTask, started: true, progress };
+        progressSftpTransfer(id, progress);
       };
       const result = await invoke<DownloadResult>('sftp_download_entry', {
-        connId, remote: r.path, local, directory, archive, prepareDrag, transferId: id, onProgress,
+        connId, remote: r.path, local, directory, archive, prepareDrag: false, transferId: id, onProgress,
       });
-      if (prepareDrag && result.drag_id) {
-        sftpDragReady = { id: result.drag_id, connId, remote: r.path, name: r.name, size: r.size, mtime: r.mtime };
-        say('已准备好，请再次拖动该项，或拖动上方的“拖到本机”按钮');
-      } else {
-        say(result.skipped ? `已下载到 ${result.path}；跳过 ${result.skipped} 个软链接或特殊文件，如需保留请使用打包下载` : `已下载到 ${result.path}`);
-      }
+      finishSftpTransfer(id, 'completed', { localPath: result.path, ...(result.skipped ? { error: `跳过 ${result.skipped} 个软链接或特殊文件；如需保留请使用打包下载` } : {}) });
+      say(result.skipped ? `已下载到 ${result.path}；跳过 ${result.skipped} 个软链接或特殊文件，如需保留请使用打包下载` : `已下载到 ${result.path}`);
     }
-    catch (e) { say(String(e), 'err'); }
+    catch (e) {
+      const cancelled = String(e).startsWith('下载已取消');
+      if (transferId) finishSftpTransfer(transferId, cancelled ? 'cancelled' : 'failed', { error: String(e) });
+      if (cancelled) say('已取消下载'); else say(String(e), 'err');
+    }
     finally { sftpXfer = ''; sftpDownloadTask = null; }
   }
   async function cancelSftpDownload() {
     const task = sftpDownloadTask;
     if (!task?.started || task.cancelling) return;
     sftpDownloadTask = { ...task, cancelling: true };
+    updateSftpTransfer(task.id, { cancelling: true });
     try { await invoke('sftp_cancel_download', { transferId: task.id }); }
     catch (e) {
       if (sftpDownloadTask?.id === task.id) sftpDownloadTask = { ...sftpDownloadTask, cancelling: false };
+      updateSftpTransfer(task.id, { cancelling: false });
       say(String(e), 'err');
     }
   }
-  async function startPreparedSftpDrag(e: DragEvent) {
+  async function onSftpDragStart(e: DragEvent, r: SftpRow) {
     e.preventDefault(); e.stopPropagation();
-    const ready = sftpDragReady;
-    if (!ready || ready.connId !== sftpConnId || sftpNativeDragging || sftpXfer) return;
+    if (sftpBusy || isSftpDeleting(r.path) || sftpXfer || sftpNativeDragging) return;
+    const connId = sftpConnId;
+    const id = crypto.randomUUID();
+    sftpSel = r.path;
+    addSftpTransfer(id, r.name, 'download', connId, r.path, undefined, 'dragging');
+    sftpDownloadTask = { id, name: r.name, drag: true, started: false, cancelling: false, progress: null };
+    sftpXfer = `拖到本机 · ${r.name}`;
     sftpNativeDragging = true;
     fctxMenu = null;
-    const onEvent = new Channel<string>();
-    onEvent.onmessage = (result) => {
-      sftpNativeDragging = false;
-      if (result === 'dropped') say('已交给系统复制，请在目标文件夹查看完成情况');
+    const onProgress = new Channel<DownloadProgress>();
+    onProgress.onmessage = (progress) => {
+      if (sftpDownloadTask?.id === id) sftpDownloadTask = { ...sftpDownloadTask, started: true, progress };
+      progressSftpTransfer(id, progress);
     };
-    try { await invoke('sftp_start_drag', { dragId: ready.id, onEvent }); }
-    catch (err) { sftpNativeDragging = false; say(String(err), 'err'); }
-  }
-  function onSftpDragStart(e: DragEvent, r: SftpRow) {
-    e.preventDefault(); e.stopPropagation();
-    if (isSftpDeleting(r.path) || sftpXfer || sftpNativeDragging) return;
-    const ready = sftpDragReady;
-    if (ready?.connId === sftpConnId && ready.remote === r.path && ready.size === r.size && ready.mtime === r.mtime) {
-      void startPreparedSftpDrag(e);
-    } else {
-      fctxMenu = null;
-      say('正在下载到本机缓存；准备好后请再拖一次');
-      void sftpDownload(r, false, true);
+    const onEvent = new Channel<SftpDragEvent>();
+    onEvent.onmessage = (event) => {
+      if (sftpDownloadTask?.id !== id) return;
+      if (event.phase === 'dragging') return;
+      sftpNativeDragging = false;
+      if (event.phase === 'dropped') {
+        sftpDownloadTask = { ...sftpDownloadTask, started: true };
+        updateSftpTransfer(id, { status: 'running', phase: 'connecting' });
+        sftpXfer = `下载 ${r.name}…`;
+        return;
+      }
+      const cancelling = sftpDownloadTask.cancelling;
+      sftpXfer = ''; sftpDownloadTask = null;
+      finishSftpTransfer(id, event.phase === 'completed' ? 'completed' : event.phase === 'error' ? 'failed' : 'cancelled', { localPath: event.path, error: event.error });
+      if (event.phase === 'completed') say(`已下载到 ${event.path || '目标文件夹'}`);
+      else if (event.phase === 'error') say(event.error || '下载失败，请重试', 'err');
+      else if (cancelling) say('已取消下载');
+    };
+    try {
+      await invoke('sftp_drag_download', { connId, remote: r.path, directory: r.dir && !r.link, transferId: id, onProgress, onEvent });
+    } catch (err) {
+      if (sftpDownloadTask?.id !== id) return;
+      sftpNativeDragging = false; sftpXfer = ''; sftpDownloadTask = null;
+      finishSftpTransfer(id, 'failed', { error: String(err) });
+      say(String(err), 'err');
     }
   }
   async function sftpUpload(dir = sftpPath) {
-    const picked = await open({ multiple: true, title: '选择要上传的文件' });
-    if (!picked) return;
-    const paths = Array.isArray(picked) ? picked : [picked];
-    for (const p of paths) {
-      const name = p.split(/[\\/]/).pop() || p;
-      sftpXfer = `上传 ${name}…`;
-      try { await invoke('sftp_upload', { connId: sftpConnId, local: p, remote: sftpJoin(dir, name) }); }
-      catch (e) { say(String(e), 'err'); sftpXfer = ''; return; }
-    }
-    sftpXfer = '';
-    say(paths.length > 1 ? `已上传 ${paths.length} 个文件` : '已上传');
-    await loadDir(dir, true);
-  }
-  /** WebView 拖入文件在部分平台会暴露本地 path，可复用流式上传；拿不到时用内容兜底。 */
-  async function sftpUploadDropped(files: File[], dir = sftpPath) {
-    if (!files.length || !dir || sftpXfer) return;
+    if (sftpBusy || sftpXfer || sftpNativeDragging || !dir) return;
     const connId = sftpConnId;
+    fctxMenu = null;
+    sftpXfer = '选择要上传的文件…';
     let uploaded = 0;
-    for (const file of files) {
-      const name = file.name.trim();
-      if (!name) continue;
-      sftpXfer = `上传 ${name}…`;
-      try {
-        const local = (file as File & { path?: string }).path?.trim();
-        if (local) {
-          await invoke('sftp_upload', { connId, local, remote: sftpJoin(dir, name) });
-        } else {
-          if (file.size > 25 * 1024 * 1024) throw new Error('拖入文件上限为 25MB；大文件请使用右上角上传按钮');
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          await invoke('sftp_write', { connId, path: sftpJoin(dir, name), b64: bytesToB64(bytes) });
-        }
+    let failed = false;
+    try {
+      const picked = await open({ multiple: true, title: '选择要上传的文件' });
+      if (!picked) return;
+      const paths = Array.isArray(picked) ? picked : [picked];
+      for (const local of paths) {
+        const name = localFileBasename(local);
+        if (!name) throw new Error('本地文件名无效，未上传');
+        await uploadSftpFile(connId, dir, name, local);
         uploaded++;
-      } catch (e) {
-        say(String(e), 'err');
-        break;
       }
-    }
-    sftpXfer = '';
-    if (uploaded) {
-      say(uploaded > 1 ? `已拖入上传 ${uploaded} 个文件` : '已拖入上传');
+    } catch (e) { failed = true; say(String(e), String(e).startsWith('上传已取消') ? undefined : 'err'); }
+    finally {
+      sftpXfer = '';
+      if (uploaded && !failed) say(uploaded > 1 ? `已上传 ${uploaded} 个文件` : '已上传');
       if (sftpConnId === connId) await loadDir(dir, true);
     }
   }
+  async function uploadSftpFile(connId: string, dir: string, name: string, local?: string, file?: File) {
+    const id = crypto.randomUUID(), remote = sftpJoin(dir, name);
+    addSftpTransfer(id, name, 'upload', connId, remote, local);
+    sftpUploadTask = { id, started: false, cancelling: false };
+    sftpXfer = `上传 ${name}…`;
+    try {
+      if (local) {
+        const onProgress = new Channel<DownloadProgress>();
+        onProgress.onmessage = progress => {
+          if (sftpUploadTask?.id === id) sftpUploadTask = { ...sftpUploadTask, started: true };
+          progressSftpTransfer(id, progress);
+        };
+        const result = await invoke<{ path: string; bytes: number; files: number }>('sftp_upload_entry', { connId, local, remote, transferId: id, onProgress });
+        finishSftpTransfer(id, 'completed', { bytes: result.bytes, totalBytes: result.bytes, files: result.files, totalFiles: result.files });
+      } else {
+        if (!file) throw new Error('未取得本地文件');
+        if (file.size > 25 * 1024 * 1024) throw new Error('此拖入方式上限为 25MB；请在「传输」中选择上传文件');
+        updateSftpTransfer(id, { phase: 'uploading', totalFiles: 1 });
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        await invoke('sftp_write', { connId, path: remote, b64: bytesToB64(bytes) });
+        // WebView byte uploads do not expose per-chunk progress or cancellation.
+        // Only record bytes once the backend confirms a completed write.
+        finishSftpTransfer(id, 'completed', { bytes: file.size, totalBytes: file.size, files: 1, totalFiles: 1 });
+      }
+    } catch (e) {
+      finishSftpTransfer(id, String(e).startsWith('上传已取消') ? 'cancelled' : 'failed', { error: String(e) });
+      throw e;
+    } finally { if (sftpUploadTask?.id === id) sftpUploadTask = null; }
+  }
+  /** Native local drops stream from verified paths; platforms without the bridge keep the byte fallback. */
+  async function sftpUploadDropped(files: File[], dir = sftpPath, connId = sftpConnId, probe?: LocalDropProbe) {
+    if (!files.length || !dir || sftpXfer || sftpBusy || sftpNativeDragging) return;
+    let uploaded = 0;
+    let failed = false;
+    let attempted = false;
+    sftpXfer = '准备上传…';
+    try {
+      let verifiedPaths: string[] | undefined;
+      if (probe) {
+        const captured = await probe.capture;
+        if (captured) {
+          if (captured.count !== files.length || probe.entries.length !== files.length) {
+            await invoke('sftp_discard_local_drop', { token: captured.token }).catch(() => {});
+            throw new Error('本地拖入项目不匹配，未上传');
+          }
+          const result = await invoke<{ paths: string[] }>('sftp_consume_local_drop', { token: captured.token, entries: probe.entries });
+          if (result.paths.length !== files.length || result.paths.some((path, index) => localFileBasename(path) !== files[index].name)) {
+            throw new Error('本地拖入项目不匹配，未上传');
+          }
+          verifiedPaths = result.paths;
+        } else if (probe.entries.some(entry => entry.directory)) {
+          throw new Error('无法读取此次拖入的本地文件夹，未上传任何文件');
+        }
+      }
+      for (const [index, file] of files.entries()) {
+        const local = verifiedPaths?.[index] ?? (probe ? undefined : (file as File & { path?: string }).path);
+        const name = local ? localFileBasename(local) : file.name;
+        if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0')) throw new Error('本地文件名无效，未继续上传');
+        attempted = true;
+        await uploadSftpFile(connId, dir, name, local, local ? undefined : file);
+        uploaded++;
+      }
+    } catch (e) {
+      failed = true;
+      say(String(e), String(e).startsWith('上传已取消') ? undefined : 'err');
+    } finally {
+      sftpXfer = '';
+      if (uploaded && !failed) say(uploaded > 1 ? `已上传 ${uploaded} 个项目` : '已上传');
+      // A cancelled upload can retain partial remote data. Refresh only its
+      // original connection, even if the user switched servers during capture.
+      if (attempted && sftpConnId === connId) await loadDir(dir, true);
+    }
+  }
   function onSftpDragOver(e: DragEvent) {
-    if (!e.dataTransfer?.types?.includes('Files') || sftpBusy || !!sftpXfer || sftpNativeDragging) return;
+    if (!e.dataTransfer?.types?.includes('Files') || e.dataTransfer.types.includes('application/x-pilot-conversation')) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-    sftpFileOver = true;
+    const target = sftpDropTargetAt(e);
+    e.dataTransfer.dropEffect = target ? 'copy' : 'none';
+    sftpDropTarget = target;
+    sftpFileOver = !!target;
+    if (target) beginSftpLocalDrop();
+    else discardSftpLocalDrop();
   }
   function onSftpDragLeave(e: DragEvent) {
     const next = e.relatedTarget;
-    if (!(next instanceof Node) || !(e.currentTarget as HTMLElement).contains(next)) sftpFileOver = false;
+    if (!(next instanceof Node) || !(e.currentTarget as HTMLElement).contains(next)) {
+      sftpFileOver = false; sftpDropTarget = null;
+      discardSftpLocalDrop();
+    }
   }
   function onSftpDrop(e: DragEvent) {
-    sftpFileOver = false;
-    if (sftpNativeDragging) { e.preventDefault(); return; }
+    const target = sftpDropTargetAt(e);
     const files = Array.from(e.dataTransfer?.files ?? []);
-    if (!files.length) return;
-    e.preventDefault();
-    void sftpUploadDropped(files);
+    sftpFileOver = false; sftpDropTarget = null;
+    if (!e.dataTransfer?.types.includes('Files') || e.dataTransfer.types.includes('application/x-pilot-conversation')) {
+      discardSftpLocalDrop(); return;
+    }
+    e.preventDefault(); e.stopPropagation();
+    if (!target || !files.length) { discardSftpLocalDrop(); return; }
+    const entries = localDropEntries(e.dataTransfer, files);
+    beginSftpLocalDrop(); // Also covers a very quick enter/drop without a dragover.
+    const capture = sftpDropCapture ?? Promise.resolve(null);
+    sftpDropCapture = null; // The accepted drop owns this token until consume.
+    void sftpUploadDropped(files, target.remoteDir, target.connId, { capture, entries });
   }
   // 在线编辑器
   let edOpen = $state(false);
@@ -10975,6 +11208,7 @@
     ++openConvSeq;
     activeConvId = ''; activeConv = null; lDraft = '';
     draft='';attachments=[];
+    if (isWorkspaceChat) lPerm = 'full';
     // 远程连接没有启动页：新对话＝把底部对话面板腾空（工作台留在原地，终端不断）。
     // 它不换「页面」，所以必须给点看得见的反馈：把面板打开并把光标放进输入框。
     viewAfterConvGone();
@@ -10983,7 +11217,8 @@
       requestAnimationFrame(() => wbStartEl?.focus());
     }
     if (!lSite && sites.length) lSite = sites[0].slug;
-    if (!brainUsable(lBrain)) lBrain = firstUsableBrain();
+    if (!lBrain.startsWith('api:') && !brainUsable(lBrain)) lBrain = firstUsableBrain();
+    if (lBrain.startsWith('api:') && !brainUsable(lBrain)) say(`${brainAvailability(lBrain)}，请在设置中检查 API 服务或手动选择其他模型。`, 'err');
   }
   async function openConv(id: string) {
     const request=++openConvSeq;
@@ -12385,6 +12620,10 @@
   }
   // 这轮若因瞬时问题失败且本轮还没自动重试过，隔几秒自动重连一次；再不行就停手（留手动「重试」）。
   function maybeAutoRetry(convId: string, failed: boolean, errText: string) {
+    const c = activeConvId === convId ? activeConv : convos.find((item) => item.id === convId);
+    // Native API requests are independently billed and may have executed tools.
+    // Keep retries explicit; the executor also refuses interrupted transcripts.
+    if (c?.brain.startsWith('api:')) return;
     if (!failed || autoRetried[convId] || !isTransient(errText)) return;
     autoRetried[convId] = true;
     if (activeConvId === convId) say('网络/接口异常，正在自动重连重试…', 'err');
@@ -12701,7 +12940,7 @@
     if (c.task_type === 'sitebuild' && !c.site_slug.trim()) return '__sitebuild__';
     return c.site_slug || '(未指定站点)';
   }
-  function brainLabel(b: string): string { return b === 'codex' ? 'Codex' : b === 'grok' ? 'Grok' : 'Claude'; }
+  function brainLabel(b: string): string { return b.startsWith('api:') ? `${apiProfile(b)?.name || '已移除的连接'} · API` : b === 'codex' ? 'Codex' : b === 'grok' ? 'Grok' : 'Claude'; }
   function fmt(secs: number): string { return new Date(secs * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   function fmtSched(iso: string): string {
     const d = new Date(iso);
@@ -12927,11 +13166,17 @@
     { value: 'grok-4.6', label: 'Grok 4.6', sub: '上一代 · 500k 上下文' },
     { value: 'grok-4.5', label: 'Grok 4.5', sub: '上一代 · 500k 上下文' },
   ];
-  function modelOptsFor(b: string) { return b === 'codex' ? CODEX_MODELS : b === 'grok' ? GROK_MODELS : CLAUDE_MODELS; }
+  function modelOptsFor(b: string) {
+    if (b.startsWith('api:')) return (apiProfile(b)?.models ?? []).map((id) => ({ value: id, label: id, sub: brainAvailability(b) }));
+    return b === 'codex' ? CODEX_MODELS : b === 'grok' ? GROK_MODELS : CLAUDE_MODELS;
+  }
   // launcher / 会话里可选：预设档位 + 该厂商的全局自定义模型 ID（定时任务表单仍只用预设 + 自己的 modelCustom）。
   function launcherModelOpts(b: string) { return [...modelOptsFor(b), ...customsOf(b).map((id) => ({ value: id, label: id, sub: '自定义' }))]; }
-  function defaultModelFor(b: string): string { return b === 'claude' ? 'claude-sonnet-5' : ''; }
-  function isLauncherModel(b: string, m: string): boolean { return launcherModelOpts(b).some((o) => o.value === m); }
+  function defaultModelFor(b: string): string {
+    if (b.startsWith('api:')) return apiProfile(b)?.default_model ?? '';
+    return b === 'claude' ? 'claude-sonnet-5' : '';
+  }
+  function isLauncherModel(b: string, m: string): boolean { return b.startsWith('api:') && !apiProfilesLoaded || launcherModelOpts(b).some((o) => o.value === m); }
 
   // 会话按「站点 → 任务类型」两级分组：站点按最近活动倒序；任务类型固定顺序，只留有会话的。
   const TASK_ORDER = ['siteops', 'sitebuild', 'workspace', 'remote'];
@@ -13156,7 +13401,7 @@
               <div class="convo {activeConvId === c.id ? 'on' : ''}" onpointerdown={(e)=>startConversationPointerDrag(e,c.id)} draggable="true" ondragstart={(e)=>startConversationDrag(e,c.id)} ondragend={endConversationDrag} role="button" tabindex="0"
                 onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
                 <div class="convo-body">
-                  <span class="convo-bi" title={brainLabel(c.brain)}><BrainIcon brain={c.brain} size={11} /></span>
+                  <span class="convo-bi" title={brainLabel(c.brain)}><BrainIcon brain={modelIcon(c.brain)} size={11} /></span>
                   <span class="convo-title">{c.title}</span>
                   {#if c.status === 'running' || running[c.id]}<span class="mini-run"></span>{/if}
                   {#if permConvs.has(c.id)}<span class="mini-permit" title="有操作等你批准">待批</span>{/if}
@@ -13228,7 +13473,7 @@
     {@const dragConversation=splitConversation(splitDragId)}
     {#if dragConversation}
       <div class="conversation-drag-ghost" style={`--drag-x:${splitDragPoint.x}px;--drag-y:${splitDragPoint.y}px`} aria-hidden="true">
-        <span class="conversation-drag-icon"><BrainIcon brain={dragConversation.brain} size={12} /></span>
+        <span class="conversation-drag-icon"><BrainIcon brain={modelIcon(dragConversation.brain)} size={12} /></span>
         <span class="conversation-drag-title">{dragConversation.title}</span>
       </div>
     {/if}
@@ -13394,7 +13639,7 @@
                 </div>
               </div>
             </div>
-            {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
+            {#if !brainUsable(lBrain)}<p class="hint warn-text">{brainSetupHint(lBrain)}</p>{/if}
           {/if}
         </div>
       </div>
@@ -13413,7 +13658,7 @@
           </div>
           {#if brains}
             <div class="cli-guide" data-no-drag>
-              <div class="cli-guide-h"><span>本地 CLI 准备（至少装好并登录一个）</span><button class="cli-redetect" onclick={refreshBrainsManual} disabled={brainsBusy} title="装好 / 登录完点这里重新检测（会重新读取 PATH）">{@render refreshIcon(brainsBusy)}<span>重新检测</span></button></div>
+              <div class="cli-guide-h"><span>模型准备（本地客户端或设置中的 API 服务）</span><button class="cli-redetect" onclick={refreshBrainsManual} disabled={brainsBusy} title="装好 / 登录完点这里重新检测（会重新读取 PATH）">{@render refreshIcon(brainsBusy)}<span>重新检测</span></button></div>
               {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: CLAUDE_INSTALL_CMD }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }, { b: 'grok' as Brain, st: brains.grok, name: 'Grok', cmd: GROK_INSTALL_CMD }] as r (r.b)}
                 <div class="cli-row">
                   <BrainIcon brain={r.b} size={16} />
@@ -13708,7 +13953,7 @@
               {/each}
             </div>
           {/if}
-          {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
+          {#if !brainUsable(lBrain)}<p class="hint warn-text">{brainSetupHint(lBrain)}</p>{/if}
           {#if isCfConn && brains?.wrangler && !brains.wrangler.found}{@render wrNote()}{/if}
         </div>
       </div>
@@ -14404,7 +14649,7 @@
                       {#each sum.tasks as t (t.id)}
                         <span class="md-task {t.enabled ? '' : 'off'}" title={t.title}>{t.title.includes('每日') ? (managedModeOf(m) === 'growth' ? '每日执行' : '每日内容') : t.title.includes('周报') || t.title.includes('复盘') ? (managedModeOf(m) === 'growth' ? '每周复盘' : '每周周报') : managedModeOf(m) === 'growth' ? '每周扫描' : '每周审计'}{t.last_run ? `：上次${t.last_status === 'ok' ? '成功' : '失败'}` : '：还没跑过'}</span>
                       {/each}
-                      {#if m.fallback_brain}<span class="md-task" title="主模型受限时接管一次">备用：<BrainIcon brain={m.fallback_brain} size={12} /> {modelDisp(m.fallback_brain, m.fallback_model ?? '')}</span>{/if}
+                      {#if m.fallback_brain}<span class="md-task" title="主模型受限且尚未执行工具时接管一次">备用：<BrainIcon brain={modelIcon(m.fallback_brain)} size={12} /> {modelDisp(m.fallback_brain, m.fallback_model ?? '')}</span>{/if}
                     </div>
                   {/if}
                   {#if m.fused_at}
@@ -14722,7 +14967,7 @@
                   </div>
                   <!-- 档位警告见权限下拉的 tip（permTipFor）；这里只留「厂商没就绪」这种当下堵路的事。 -->
                   {#if !brainUsable(lBrain)}
-                    <p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>
+                    <p class="hint warn-text">{brainSetupHint(lBrain)}</p>
                   {/if}
                 </div>
               {/if}
@@ -14737,9 +14982,9 @@
           {/if}
           <aside class="files-wrap" class:solo={wbFilesSolo} class:fileover={sftpFileOver}
             style="{wbFilesSolo ? '' : `width:${wb.filesW}px;`} --fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px"
-            ondragover={onSftpDragOver} ondragleave={onSftpDragLeave} ondrop={onSftpDrop}>
+            ondragenter={onSftpDragOver} ondragover={onSftpDragOver} ondragleave={onSftpDragLeave} ondrop={onSftpDrop}>
           {#if sftpFileOver}
-            <div class="files-drop-overlay"><b>松开即可上传</b><small>到 {sftpPath || '当前目录'}</small></div>
+            <div class="files-drop-overlay"><b>松开上传</b><small title={sftpDropTarget?.remoteDir}>到 {sftpDropTarget?.remoteDir || sftpPath || '当前目录'}</small></div>
           {/if}
           <div class="files-bar">
             <button class="fbtn" aria-label="上一级" data-tip="上一级" onclick={sftpUp} disabled={sftpBusy || !sftpPath || sftpPath === '/'}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
@@ -14760,26 +15005,11 @@
             {/if}
             <button class="fbtn" aria-label="刷新" data-tip="刷新" onclick={sftpRefresh} disabled={sftpBusy}>{@render refreshIcon(sftpBusy)}</button>
             <button class="fbtn" aria-label="新建文件夹" data-tip="新建文件夹" onclick={() => openMkdir()} disabled={sftpBusy}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M8 7.4v3.4M6.3 9.1h3.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
-            <button class="fbtn" aria-label="上传文件" data-tip="上传到当前目录" onclick={() => sftpUpload()} disabled={sftpBusy || !!sftpXfer}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 10.4V3.6M4.8 6.4 8 3.2l3.2 3.2M3 12.8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+            <SftpTransfers records={sftpTransfers} busy={sftpBusy || !!sftpXfer || sftpNativeDragging}
+              canDownload={!fileRename && !!sftpSelectedRow && !isSftpDeleting(sftpSelectedRow.path)} selectedName={sftpSelectedRow?.name}
+              cancellableIds={sftpCancellableIds} onupload={() => sftpUpload()} ondownload={sftpDownloadSelected}
+              oncancel={cancelSftpTransfer} onclear={clearSftpTransfers} onreveal={revealSftpTransfer} />
           </div>
-          {#if sftpXfer}
-            <div class="files-note sftp-transfer-note" role="status">
-              <span>{sftpXfer}
-                {#if sftpDownloadTask?.progress}
-                  {@const p = sftpDownloadTask.progress}
-                  <small>{p.phase === 'connecting' ? '正在连接…' : p.phase === 'scanning' ? `扫描目录：已找到 ${p.total_files} 个文件` : `${fmtSize(p.bytes)}${p.total_bytes ? ` / ${fmtSize(p.total_bytes)}` : ''} · ${p.files}/${p.total_files} 个文件`}</small>
-                  {#if p.total_bytes > 0 && p.phase === 'downloading'}<progress max={p.total_bytes} value={Math.min(p.bytes, p.total_bytes)} aria-label="下载进度"></progress>{/if}
-                {/if}
-              </span>
-              {#if sftpDownloadTask}<button class="btn sm" onclick={cancelSftpDownload} disabled={!sftpDownloadTask.started || sftpDownloadTask.cancelling}>{sftpDownloadTask.cancelling ? '取消中…' : '取消'}</button>{/if}
-            </div>
-          {/if}
-          {#if sftpDragReady?.connId === sftpConnId && !sftpXfer}
-            <div class="files-note sftp-drag-note">
-              <button class="btn sm" draggable={!sftpNativeDragging} ondragstart={startPreparedSftpDrag} onclick={() => say('请按住此按钮，拖到 Finder、桌面或资源管理器')} disabled={sftpNativeDragging}>拖到本机：{sftpDragReady.name}</button>
-              <small>已下载快照；直接拖动，不删除远端内容。刷新列表可重新准备。</small>
-            </div>
-          {/if}
           <!-- 出错就地给个重试：首次加载失败时 sftpPath 还是空的，刷新键（要有当前目录）帮不上忙 -->
           {#if sftpErr}<button type="button" class="err-note files-err" onclick={retryOrRepairSftp} title={missingSshCredential(sftpErr) ? '打开连接设置并补录密码' : '点击重试'}>{sftpErr} · {missingSshCredential(sftpErr) ? '补录密码' : '点此重试'}</button>{/if}
           <div class="fhead">
@@ -14800,8 +15030,8 @@
                 {@const deleteTarget = isSftpDeleteTarget(r.path)}
                 {@const renaming = fileRename?.connId === sftpConnId && fileRename?.path === r.path}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div class="frow" class:on={sftpSel === r.path} class:deleting role="row" tabindex="-1" aria-busy={deleting}
-                  draggable={!deleting && !renaming && !sftpXfer && !sftpNativeDragging} ondragstart={(e) => onSftpDragStart(e, r)}
+                <div class="frow" class:on={sftpSel === r.path} class:deleting class:drop-target={sftpFileOver && sftpDropTarget?.remoteDir === r.path && r.dir && !r.link} data-sftp-drop-path={r.path} role="row" tabindex="-1" aria-busy={deleting}
+                  draggable={isMac && !deleting && !renaming && !sftpBusy && !sftpXfer && !sftpNativeDragging} ondragstart={(e) => onSftpDragStart(e, r)}
                   onclick={() => { if (!deleting) sftpSel = r.path; }}
                   ondblclick={() => { if (!deleting && !renaming) sftpOpenRow(r); }}
                   oncontextmenu={(e) => { e.stopPropagation(); if (!deleting) openFctx(e, r); }}
@@ -15065,7 +15295,7 @@
   <div class="tool"><span class="tcode">{t.label}</span><span class="tdetail">{t.detail}</span>{#if (t.count ?? 0) > 1}<span class="tool-count">×{t.count}</span>{/if}</div>
 {/snippet}
 
-{#snippet brainTag(brain: string, label: string)}<span class="btag"><BrainIcon {brain} size={12} />{label}</span>{/snippet}
+{#snippet brainTag(brain: string, label: string)}<span class="btag"><BrainIcon brain={modelIcon(brain)} size={12} />{label}</span>{/snippet}
 
 <!-- 只有「全部」「自建」带图标：这两个是**看什么范围**，后面那排是**按页型筛**。
      给每个都配图标反而把这层区别抹平了。 -->
@@ -15352,7 +15582,7 @@
       <header class="thread-head conversation-thread-head" class:multi={leaves(conversationLayout).length>1} onmousedown={(e)=>{if(!paneId)startDrag(e);}}>
         <div class="th-info" role="button" tabindex="0" aria-label={`拖动对话 ${context?.title} 以分屏`} onpointerdown={(e)=>{if(context)startConversationPointerDrag(e,context.id);}} onkeydown={(e)=>{if(e.key==='Escape')endConversationDrag();}}>
           <b class="conversation-head-title" data-tip={activeConv?.title}>
-            <span class="conversation-head-model" data-tip={brainLabel(activeConv?.brain??'claude')}><BrainIcon brain={activeConv?.brain??'claude'} size={14} /></span>
+            <span class="conversation-head-model" data-tip={brainLabel(activeConv?.brain??'claude')}><BrainIcon brain={modelIcon(activeConv?.brain??'claude')} size={14} /></span>
             <span>{activeConv?.title}</span>
           </b>
         </div>
@@ -16192,7 +16422,7 @@
         {/each}
       </div>
 
-      <div class="sec-head mt"><span>本地模型</span><button class="icon-btn" onclick={refreshBrainsManual} title="刷新">{@render refreshIcon(brainsBusy)}</button></div>
+      <div class="sec-head mt"><span>模型服务 · 本地客户端</span><button class="icon-btn" onclick={refreshBrainsManual} title="刷新本地客户端">{@render refreshIcon(brainsBusy)}</button></div>
       {#if brains}
         <div class="brains-list">
         {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: CLAUDE_INSTALL_CMD }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }, { b: 'grok' as Brain, st: brains.grok, name: 'Grok', cmd: GROK_INSTALL_CMD }] as r (r.b)}
@@ -16340,6 +16570,7 @@
         </div>
       {/if}
       <p class="hint tos">自定义模型 ID 会作为该厂商模型下拉里的附加档位（可加多个）；仅限本人订阅账户驱动本地官方 CLI，密钥存 {keystoreName}。</p>
+      <ApiServices profiles={apiProfiles} onchange={(profiles: ApiProfile[]) => { apiProfiles = profiles; }} />
 
       <button class="transfer-entry" type="button" onclick={() => openTransfer()}>
         <span class="transfer-entry-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 20 20" fill="none"><path d="M6.5 3.5h7A1.5 1.5 0 0 1 15 5v10a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 5 15V5a1.5 1.5 0 0 1 1.5-1.5Z" stroke="currentColor" stroke-width="1.4"/><path d="M7.5 7.5h5M7.5 10h5M7.5 12.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M3.5 6.5V15A2.5 2.5 0 0 0 6 17.5h7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>
@@ -16567,9 +16798,9 @@
       </div>
 
       {#if transferTab === 'export'}
-        <p class="transfer-intro">选择要带走的 Pilot 数据。配置包不包含 Google OAuth；技能包和本机 CLI 程序需要在目标电脑单独准备。</p>
+        <p class="transfer-intro">选择要带走的 Pilot 数据。配置包不包含 Google OAuth、模型 API 连接及密钥；技能包和本机 CLI 程序需要在目标电脑单独准备。API 会话和任务迁移后，需要重新配置并选择 API 连接。</p>
       {:else}
-        <p class="transfer-intro">先选择配置包查看内容，再选择导入范围和处理方式。会话正文会保留，底层 CLI 会话将在目标电脑重新建立。</p>
+        <p class="transfer-intro">先选择配置包查看内容，再选择导入范围和处理方式。会话正文会保留，底层会话将在目标电脑重新建立；使用 API 的会话和任务需要重新配置并选择 API 连接。</p>
       {/if}
 
       <div class="transfer-section-title">内容范围</div>
@@ -18749,7 +18980,6 @@
       <button class="ctx-item" role="menuitem" onclick={() => sftpOpenRow(r)}>{r.dir && !r.link ? '打开' : r.link ? '打开（跟随链接）' : '打开（编辑）'}</button>
       <button class="ctx-item" role="menuitem" onclick={() => sftpDownload(r)} disabled={!!sftpXfer}>下载…</button>
       {#if r.dir && !r.link}<button class="ctx-item" role="menuitem" onclick={() => sftpDownload(r, true)} disabled={!!sftpXfer}>打包下载（.tar.gz）…</button>{/if}
-      <button class="ctx-item" role="menuitem" onclick={() => sftpDownload(r, false, true)} disabled={!!sftpXfer || sftpNativeDragging}>准备拖到本机…</button>
       {#if r.dir && !r.link}
         <button class="ctx-item" role="menuitem" onclick={() => sftpUpload(r.path)} disabled={!!sftpXfer}>上传到这里…</button>
         <button class="ctx-item" role="menuitem" onclick={() => openMkdir(r.path)}>在这里新建文件夹</button>
@@ -19573,9 +19803,9 @@
   .rseg-btn.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
   /* 远程文件面板（工作台右栏；宽度由 wb.filesW 内联给） */
   .files-wrap { position: relative; flex: none; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
-  .files-drop-overlay { position: absolute; inset: 8px; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--bg) 92%, var(--accent)); color: var(--text); pointer-events: none; box-shadow: 0 8px 28px rgba(0,0,0,.12); }
-  .files-drop-overlay b { font-size: 14px; font-weight: 650; }
-  .files-drop-overlay small { max-width: 88%; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .files-drop-overlay { position: absolute; inset: auto 8px 8px; z-index: 40; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border2); border-radius: 6px; background: var(--bg); color: var(--text); pointer-events: none; box-shadow: 0 2px 8px #0001; }
+  .files-drop-overlay b { flex: none; font-size: 12px; font-weight: 500; }
+  .files-drop-overlay small { min-width: 0; overflow: hidden; color: var(--dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   /* 单开时吃满整宽（撤掉固定宽 flex:none）；左边没东西了，左边框也去掉。 */
   .files-wrap.solo { flex: 1; min-width: 0; border-left: 0; }
   .files-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
@@ -19598,12 +19828,6 @@
   .fbtn.sm { width: 22px; height: 22px; border: 0; border-radius: 5px; }
   .fbtn.sm:hover:not(:disabled) { background: var(--accent-soft); }
   .fbtn.danger:hover:not(:disabled) { color: var(--err); background: var(--err-soft); }
-  .files-note { flex: none; padding: 6px 16px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--border); }
-  .sftp-transfer-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .sftp-transfer-note > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .sftp-transfer-note small, .sftp-drag-note small { display: block; margin-top: 4px; color: var(--muted); }
-  .sftp-transfer-note progress { display: block; width: 100%; height: 5px; margin-top: 6px; accent-color: var(--accent); }
-  .sftp-drag-note .btn { cursor: grab; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* 现在是个重试按钮：清掉按钮默认样式，只留 err-note 的红底红字 + 左对齐 + 手型 */
   .files-err { flex: none; margin: 10px 16px 0; display: block; width: calc(100% - 32px); text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
   .files-err:hover { background: var(--err-border); }
@@ -19632,6 +19856,7 @@
   .frow { display: flex; align-items: center; padding: 0 8px; border-radius: 6px; cursor: default; user-select: none; }
   .frow:hover { background: var(--rail); }
   .frow.on { background: var(--accent-soft); }
+  .frow.drop-target { background: var(--accent-soft); outline: 1px solid var(--border2); outline-offset: -1px; }
   .frow.deleting, .frow.deleting:hover, .frow.deleting.on { background: var(--rail); opacity: .52; cursor: progress; }
   .fname { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; padding: 5px 0; }
   .fname-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: default; }

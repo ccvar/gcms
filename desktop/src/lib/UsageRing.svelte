@@ -50,6 +50,9 @@
   // 官方订阅额度无查询接口，这只是本地体感计量，换算不了剩余百分比。
   type UsageStats = { window_a: Record<string, number>; window_b: Record<string, number> };
   let usage = $state<UsageStats | null>(null);
+  function apiUsage(window: Record<string, number> | undefined): number {
+    return Object.entries(window ?? {}).reduce((sum, [brain, tokens]) => sum + (brain.startsWith('api:') ? tokens : 0), 0);
+  }
   async function loadUsage() {
     const midnight = new Date();
     midnight.setHours(0, 0, 0, 0);
@@ -115,6 +118,12 @@
       <div class="ur-sec">本地用量<span class="ur-sub">token · 仅供参考</span></div>
       <div class="ur-row"><span>近 5 小时</span><b>Claude {fmtTok(usage?.window_a?.claude)} · Codex {fmtTok(usage?.window_a?.codex)} · Grok {fmtTok(usage?.window_a?.grok)}</b></div>
       <div class="ur-row"><span>今日</span><b>Claude {fmtTok(usage?.window_b?.claude)} · Codex {fmtTok(usage?.window_b?.codex)} · Grok {fmtTok(usage?.window_b?.grok)}</b></div>
+      {#if apiUsage(usage?.window_a) || apiUsage(usage?.window_b)}
+        <div class="ur-div"></div>
+        <div class="ur-row"><span>API · 近 5 小时</span><b>{fmtTok(apiUsage(usage?.window_a))} tokens</b></div>
+        <div class="ur-row"><span>API · 今日</span><b>{fmtTok(apiUsage(usage?.window_b))} tokens</b></div>
+        <div class="ur-total">仅统计 Pilot 调用；费用以服务商账单为准。</div>
+      {/if}
     </div>
   {/if}
 </div>

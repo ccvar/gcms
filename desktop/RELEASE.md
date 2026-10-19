@@ -4,7 +4,7 @@
 
 ## 机制
 
-- **打包**：推 `pilot-v*` tag → `.github/workflows/pilot-release.yml` 在 macOS runner 上 `tauri build`（aarch64），产出 `.dmg`（首装）+ `.app.tar.gz`+`.sig`（升级包）+ `latest.json`（更新清单），发布到 `ccvar/gcms-pilot-releases`（make_latest）。
+- **打包**：推 `pilot-v*` tag → `.github/workflows/pilot-release.yml` 分别构建 macOS arm64 和 Windows x64；macOS 产出 `.dmg` 与签名更新包，Windows 产出签名 NSIS 安装器。两个平台完成后合并 `latest.json`，发布到 `ccvar/gcms-pilot-releases`。
 - **升级**：app 里「连接与模型 → 关于 → 检查更新」调用 Tauri updater，拉 `.../releases/latest/download/latest.json`，比版本 → ed25519 验签 → 下载安装 → 重启。公钥已内置在 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
 
 ## 一次性配置（只做一次）
@@ -20,9 +20,10 @@
 ## 每次发版
 
 ```bash
-# 1. 改版本号（两处要一致）
+# 1. 改版本号（三处要一致）
 #    desktop/src-tauri/tauri.conf.json  -> "version": "0.1.1"
 #    desktop/package.json               -> "version": "0.1.1"
+#    desktop/package-lock.json          -> 根版本及 packages[""].version
 # 2. 提交后打 tag（注意是 pilot-v 前缀，跟服务端 v* 分开）
 git tag pilot-v0.1.1
 git push origin pilot-v0.1.1
@@ -52,4 +53,4 @@ CI 跑完后，`gcms-pilot-releases` 会出一个 `pilot-v0.1.1` release，带 `
 
 ## ToS
 
-Pilot 只驱动本机订阅版 `claude`/`codex` CLI，不碰任何人的 OAuth token；分发给别人时 app 不带任何登录凭据，每个用户装完用自己的 CLI 登录。
+Pilot 支持本机 `claude` / `codex` / `grok` 客户端以及用户自备 API Key 的模型服务，不提取客户端的 OAuth token。API Key 保存在系统凭据库，API 调用由服务商独立计费。分发包不包含任何登录凭据，每位用户自行登录客户端或配置 API 服务。

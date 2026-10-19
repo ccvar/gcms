@@ -1261,6 +1261,76 @@ impl SshSessions {
             .map_err(|e| format!("下载失败: {e}"))
     }
 
+    /// Tracked upload: reuse the legacy file create/truncate behavior, including
+    /// merging into existing directories. Never remove remote data on failure.
+    pub(crate) async fn upload_tree(
+        &self,
+        conn_id: &str,
+        plan: &crate::sftp_transfer::UploadPlan,
+        progress: &Channel<crate::sftp_transfer::Progress>,
+    ) -> Result<(u64, u64), String> {
+        use crate::sftp_transfer::Progress;
+        let sftp = self.sftp(conn_id).await?;
+        let mut status = Progress {
+            phase: "uploading".into(),
+            total_bytes: plan.total_bytes,
+            total_files: plan.files.len() as u64,
+            ..Default::default()
+        };
+        let _ = progress.send(status.clone());
+        // The scan records parents before their children, including empty dirs.
+        for directory in &plan.directories {
+            if let Err(error) = sftp.create_dir(directory.clone()).await {
+                let existing_directory = sftp
+                    .symlink_metadata(directory.clone())
+                    .await
+                    .is_ok_and(|meta| meta.file_type().is_dir());
+                if !existing_directory {
+                    return Err(format!(
+                        "创建上传目录 {directory} 失败: {error}；远端已写入的内容会保留"
+                    ));
+                }
+            }
+        }
+        for entry in &plan.files {
+            let source_meta = tokio::fs::symlink_metadata(&entry.local)
+                .await
+                .map_err(|e| format!("检查上传来源 {} 失败: {e}", entry.local.display()))?;
+            if !source_meta.is_file() || source_meta.len() != entry.size {
+                return Err(format!(
+                    "上传来源已改变：{}；未继续写入",
+                    entry.local.display()
+                ));
+            }
+            let mut source = tokio::fs::File::open(&entry.local)
+                .await
+                .map_err(|e| format!("打开上传来源 {} 失败: {e}", entry.local.display()))?;
+            let opened_meta = source.metadata().await.map_err(|e| e.to_string())?;
+            if !opened_meta.is_file() || opened_meta.len() != entry.size {
+                return Err(format!(
+                    "上传来源已改变：{}；未继续写入",
+                    entry.local.display()
+                ));
+            }
+            let mut destination = sftp
+                .create(entry.remote.clone())
+                .await
+                .map_err(|e| format!("创建远端文件 {} 失败: {e}", entry.remote))?;
+            copy_upload_stream(&mut source, &mut destination, entry.size, |bytes| {
+                status.bytes += bytes;
+                // One update per acknowledged MiB (or final partial chunk).
+                // Keep the last known byte count even if close/cancel fails.
+                let _ = progress.send(status.clone());
+            })
+            .await
+            .map_err(|e| format!("上传 {} 失败: {e}；远端已写入的内容会保留", entry.remote))?;
+            // Only a successful SFTP close marks a file complete.
+            status.files += 1;
+            let _ = progress.send(status.clone());
+        }
+        Ok((status.bytes, status.files))
+    }
+
     /// 上传：本地 → 远程，流式拷贝。目标已存在则截断覆盖。
     pub async fn upload(&self, conn_id: &str, local: &str, remote: &str) -> Result<u64, String> {
         use tokio::io::AsyncWriteExt as _;
@@ -1334,9 +1404,209 @@ impl SshSessions {
     }
 }
 
+/// russh-sftp write_all queues writes; flush drains the server acknowledgements.
+/// Report only flushed bytes, and do not signal file completion before close.
+/// Dropping this future stops further writes without unlinking remote content.
+async fn copy_upload_stream<R, W>(
+    source: &mut R,
+    destination: &mut W,
+    expected: u64,
+    mut report: impl FnMut(u64),
+) -> Result<u64, String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    let mut bytes = 0_u64;
+    loop {
+        let size = source
+            .read(&mut buffer)
+            .await
+            .map_err(|e| format!("读取本地文件失败: {e}"))?;
+        if size == 0 {
+            break;
+        }
+        if size as u64 > expected.saturating_sub(bytes) {
+            return Err("上传期间本地文件大小已改变，请确认后重新上传".into());
+        }
+        destination
+            .write_all(&buffer[..size])
+            .await
+            .map_err(|e| format!("写入失败: {e}"))?;
+        destination
+            .flush()
+            .await
+            .map_err(|e| format!("服务端确认写入失败: {e}"))?;
+        bytes += size as u64;
+        report(size as u64);
+    }
+    if bytes != expected {
+        return Err("上传期间本地文件大小已改变，请确认后重新上传".into());
+    }
+    destination
+        .shutdown()
+        .await
+        .map_err(|e| format!("远端文件收尾失败: {e}"))?;
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct UploadSink {
+        data: Vec<u8>,
+        fail_flush: bool,
+        fail_close: bool,
+        closed: bool,
+    }
+
+    impl tokio::io::AsyncWrite for UploadSink {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            bytes: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            self.data.extend_from_slice(bytes);
+            std::task::Poll::Ready(Ok(bytes.len()))
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(if self.fail_flush {
+                Err(std::io::Error::other("mock ACK failure"))
+            } else {
+                Ok(())
+            })
+        }
+        fn poll_shutdown(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if self.fail_close {
+                return std::task::Poll::Ready(Err(std::io::Error::other("mock close failure")));
+            }
+            self.closed = true;
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_progress_counts_flushed_bytes_and_waits_for_close() {
+        let data = vec![73; 2 * 1024 * 1024 + 19];
+        let mut source = std::io::Cursor::new(data.clone());
+        let mut destination = UploadSink::default();
+        let mut chunks = Vec::new();
+        let bytes = copy_upload_stream(&mut source, &mut destination, data.len() as u64, |n| {
+            chunks.push(n)
+        })
+        .await
+        .unwrap();
+        assert_eq!(bytes, data.len() as u64);
+        assert_eq!(chunks.iter().sum::<u64>(), bytes);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(destination.data, data);
+        assert!(destination.closed);
+
+        let mut empty = std::io::Cursor::new(Vec::<u8>::new());
+        let mut destination = UploadSink::default();
+        assert_eq!(
+            copy_upload_stream(&mut empty, &mut destination, 0, |_| panic!(
+                "empty progress"
+            ))
+            .await
+            .unwrap(),
+            0
+        );
+        assert!(destination.closed);
+    }
+
+    #[tokio::test]
+    async fn upload_ack_or_close_failure_is_not_a_success_and_does_not_fake_progress() {
+        let mut source = std::io::Cursor::new(b"data");
+        let mut destination = UploadSink {
+            fail_flush: true,
+            ..Default::default()
+        };
+        let error = copy_upload_stream(&mut source, &mut destination, 4, |_| {
+            panic!("unacknowledged bytes reported")
+        })
+        .await
+        .unwrap_err();
+        assert!(error.contains("确认写入失败"));
+        assert!(!destination.closed);
+
+        let mut source = std::io::Cursor::new(b"data");
+        let mut destination = UploadSink {
+            fail_close: true,
+            ..Default::default()
+        };
+        let mut acknowledged = 0;
+        let error = copy_upload_stream(&mut source, &mut destination, 4, |n| acknowledged += n)
+            .await
+            .unwrap_err();
+        assert_eq!(acknowledged, 4);
+        assert!(error.contains("收尾失败"));
+        assert!(!destination.closed);
+    }
+
+    #[tokio::test]
+    async fn upload_source_size_changes_fail_explicitly() {
+        for expected in [3, 5] {
+            let mut source = std::io::Cursor::new(b"data");
+            let mut destination = UploadSink::default();
+            let error = copy_upload_stream(&mut source, &mut destination, expected, |_| {})
+                .await
+                .unwrap_err();
+            assert!(error.contains("大小已改变"));
+            assert!(!destination.closed);
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_cancellation_preserves_partial_target_and_stops_future_writes() {
+        use tokio::io::AsyncWriteExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("existing-remote-mock");
+        std::fs::write(&target, b"old content").unwrap();
+        let destination = tokio::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&target)
+            .await
+            .unwrap();
+        let (mut feed, source) = tokio::io::duplex(64);
+        let (cancel_tx, mut cancel) = tokio::sync::watch::channel(false);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let mut ready = Some(ready_tx);
+            let mut source = source;
+            let mut destination = destination;
+            crate::sftp_transfer::cancellable_upload(
+                &mut cancel,
+                copy_upload_stream(&mut source, &mut destination, 100, |_| {
+                    if let Some(ready) = ready.take() {
+                        let _ = ready.send(());
+                    }
+                }),
+            )
+            .await
+        });
+        feed.write_all(b"partial").await.unwrap();
+        ready_rx.await.unwrap();
+        cancel_tx.send(true).unwrap();
+        assert!(task.await.unwrap().unwrap_err().starts_with("上传已取消"));
+        assert!(
+            target.exists(),
+            "cancel must never unlink an existing remote target"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"partial");
+        assert!(feed.write_all(b"must not continue").await.is_err());
+    }
 
     #[test]
     fn download_types_do_not_classify_symlinks_or_sockets_as_files_or_directories() {
