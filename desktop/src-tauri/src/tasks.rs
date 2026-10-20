@@ -193,4 +193,31 @@ impl TaskStore {
         self.save(&list)?;
         Ok(Some(updated))
     }
+
+    /// Keep the task lock while a related store commits. The callback may save a
+    /// complete updated task list, then commit the related record. If that commit
+    /// fails, roll the task file back before releasing the lock.
+    pub fn transaction<T, F>(&self, operation: F) -> Result<T, String>
+    where
+        F: FnOnce(
+            &[ScheduledTask],
+            &dyn Fn(&[ScheduledTask]) -> Result<(), String>,
+        ) -> Result<T, String>,
+    {
+        let _g = self.lock.lock().unwrap();
+        let original = self.read();
+        let wrote = std::cell::Cell::new(false);
+        let save = |updated: &[ScheduledTask]| {
+            self.save(updated)?;
+            wrote.set(true);
+            Ok(())
+        };
+        let result = operation(&original, &save);
+        if result.is_err() && wrote.get() {
+            self.save(&original).map_err(|error| {
+                format!("保存失败且任务回滚失败，请暂停托管并重试：{error}")
+            })?;
+        }
+        result
+    }
 }

@@ -7,6 +7,12 @@
 - **打包**：推 `pilot-v*` tag → `.github/workflows/pilot-release.yml` 分别构建 macOS arm64 和 Windows x64；macOS 产出 `.dmg` 与签名更新包，Windows 产出签名 NSIS 安装器。两个平台完成后合并 `latest.json`，发布到 `ccvar/gcms-pilot-releases`。
 - **升级**：app 里「连接与模型 → 关于 → 检查更新」调用 Tauri updater，拉 `.../releases/latest/download/latest.json`，比版本 → ed25519 验签 → 下载安装 → 重启。公钥已内置在 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
 
+## 0.2.63（2026-10-20）
+
+- 托管卡片的模式标签支持下拉切换「计划托管 ↔ 增长托管」，单站编辑与批量设置同步支持；切换前二次确认，取消或保存失败不提前改变界面状态。
+- 切换保留现有任务 ID、排期、启停、模型、预算、运营计划、草稿与历史记录，并分别保存、恢复各模式的自定义提示词；兼容旧版两条配套任务。
+- 任务运行期间禁止切换，调度器与手动运行读取切换后的最新任务。切换本身不立即执行任务；保存托管记录失败时回滚配套任务文件。
+
 ## 0.2.62（2026-10-20）
 
 - 修复 Claude API 旧会话续聊及截断恢复时的 `Invalid signature in thinking block`：恢复提示追加为新消息，不再修改思考签名绑定的系统说明。

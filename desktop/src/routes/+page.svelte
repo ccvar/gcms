@@ -25,9 +25,10 @@
   import ModelFx from '$lib/ModelFx.svelte';
   import { effortAfterModelPick, type ModelOption } from '$lib/modelSelection';
   import ManagedSettings from '$lib/ManagedSettings.svelte';
+  import ManagedModePicker from '$lib/ManagedModePicker.svelte';
   import ManagedSitePicker from '$lib/ManagedSitePicker.svelte';
   import ManagedCardMenu from '$lib/ManagedCardMenu.svelte';
-  import { settingLabels, validateManagedPatch, type ManagedSettingsPatch } from '$lib/managedSettings';
+  import { managedModeName, managedModeSwitchNotice, settingLabels, validateManagedPatch, type ManagedSettingsPatch } from '$lib/managedSettings';
   import UsageRing from '$lib/UsageRing.svelte';
   import { hideTip, showTipFor, tip as tipAction } from '$lib/tip';
   import AppIcon from '$lib/AppIcon.svelte';
@@ -5059,6 +5060,31 @@
     managedEditError = '';
     managedEditor = {connId:activeConnId,targets:targets.map(m=>({...m}))};
   }
+  let managedModeBusy = $state<Record<string, boolean>>({});
+  async function changeManagedMode(m: ManagedSite, next: ManagedMode) {
+    if (managedModeBusy[m.id] || managedEditBusy || next === managedModeOf(m) || !['plan', 'growth'].includes(next)) return;
+    const id = m.id, connId = m.conn_id, siteName = m.site_name;
+    managedModeBusy[id] = true;
+    let submitted = false;
+    try {
+      const yes = await confirmDialog(`将「${siteName}」从${managedModeName(managedModeOf(m))}切换为${managedModeName(next)}。\n\n${managedModeSwitchNotice}`, {
+        title: '切换托管模式', confirmText: `切换为${managedModeName(next)}`, kind: 'warning',
+      });
+      if (!yes) return;
+      submitted = true;
+      const results = await invoke<{id:string;error:string|null}[]>('managed_update_settings', {connId, ids:[id], patch:{mode:next}});
+      const result = results.find(result => result.id === id);
+      if (!result || result.error) throw new Error(result?.error || '未收到切换结果，请刷新后确认');
+      // Panels belong to the old mode; drafts/plans remain stored, not deleted.
+      mOpenPanel[id] = undefined;
+      say(`${siteName} 已切换为${managedModeName(next)}`);
+    } catch (error) { say(`切换托管模式失败：${String(error)}`, 'err'); }
+    finally {
+      // Also refresh after a partial disk failure; never optimistically relabel.
+      try { if (submitted) { await loadManaged(); await loadTasks(); } }
+      finally { managedModeBusy[id] = false; }
+    }
+  }
   async function saveManagedSettings(patch: ManagedSettingsPatch) {
     const editor = managedEditor;
     if (!editor || managedEditBusy) return;
@@ -5073,21 +5099,22 @@
         const m=value as {brain:string;model:string;effort:string};
         return `${label}：${m.brain ? `${modelDisp(m.brain,m.model)} · ${effortDisp(m.effort, m.brain)}` : '停用'}`;
       }
-      return `${label}：${key==='level'?levelLabel(String(value)):key==='token_weekly_budget'&&value===0?'不限':value}`;
+      return `${label}：${key==='mode'?managedModeName(String(value)):key==='level'?levelLabel(String(value)):key==='token_weekly_budget'&&value===0?'不限':value}`;
     });
     managedEditBusy=true;
     try {
-      const yes=await confirmDialog(`将修改 ${editor.targets.length} 个站点：${editor.targets.map(m=>m.site_name).join('、')}\n\n${changes.join('\n')}\n\n未勾选的设置与各站运营计划保持不变。${patch.level==='l3'?`\n\n${L3_WARN}`:patch.level && patch.level!=='l0'?'\n所选等级允许自动发布常规文章。':''}`, {title:'确认修改托管',confirmText:'保存修改',kind:'warning'});
+      const yes=await confirmDialog(`将修改 ${editor.targets.length} 个站点：${editor.targets.map(m=>m.site_name).join('、')}\n\n${changes.join('\n')}\n\n未勾选的设置与各站运营计划保持不变。${patch.mode?`\n\n${managedModeSwitchNotice}`:''}${patch.level==='l3'?`\n\n${L3_WARN}`:patch.level && patch.level!=='l0'?'\n所选等级允许自动发布常规文章。':''}`, {title:'确认修改托管',confirmText:'保存修改',kind:'warning'});
       if (!yes) return;
       const results=await invoke<{id:string;error:string|null}[]>('managed_update_settings',{connId:editor.connId,ids:editor.targets.map(m=>m.id),patch});
       const failed=results.filter(r=>r.error);
+      if (patch.mode) for (const result of results.filter(r=>!r.error)) mOpenPanel[result.id] = undefined;
       if (failed.length) {
         managedEditError=`${results.length-failed.length} 个成功，${failed.length} 个未完成。\n${failed.map(r=>`${editor.targets.find(m=>m.id===r.id)?.site_name}：${r.error}`).join('\n')}`;
         managedSelected=failed.map(r=>r.id);
         managedEditor={connId:editor.connId,targets:editor.targets.filter(m=>failed.some(r=>r.id===m.id))};
       } else {
         managedEditor=null; managedSelected=[]; managedBatch=false;
-        say(`已更新 ${results.length} 个站点的托管设置；运行中的任务从下一次执行生效`);
+        say(patch.mode ? `已更新 ${results.length} 个站点的托管设置，后续任务按所选模式执行` : `已更新 ${results.length} 个站点的托管设置；运行中的任务从下一次执行生效`);
       }
       await loadManaged(); await loadTasks();
     } catch(e) { managedEditError=String(e); }
@@ -14638,7 +14665,7 @@
                 <div class="task-body">
                   <div class="md-title-row">
                     <b><SiteFav src={siteFav(m.site_slug)} label={m.site_slug} size={14} /> {m.site_name}</b>
-                    <span class="md-mode-badge" class:growth={managedModeOf(m) === 'growth'}>{managedModeLabel(m)}</span>
+                    <ManagedModePicker mode={managedModeOf(m)} label={managedModeLabel(m)} disabled={!!managedModeBusy[m.id] || managedEditBusy} onchange={next=>void changeManagedMode(m,next)} />
                     <span class="md-lv-badge" title="点击调整托管等级"><Dropdown compact bare bind:value={m.level} options={LEVEL_OPTS} onchange={(v: string) => changeLevel(m, v)} /></span>
                     {#if m.level === 'l3'}<span class="md-badge lv3">慎用</span>{/if}
                     {#if m.paused}<span class="md-badge off">已暂停</span>{/if}
@@ -23245,8 +23272,6 @@
   .md-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
   .md-title-row > b { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
   .md-title-row > b :global(.site-fav) { flex: none; }
-  .md-mode-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 1px 7px; border-radius: 999px; background: #f0eee8; color: var(--dim); font-size: 10.5px; line-height: 1.2; white-space: nowrap; }
-  .md-mode-badge.growth { background: #e8f2ec; color: #27704c; }
   .md-model-badge { display: inline-flex; align-items: center; margin-left: 1px; }
   .md-model-badge :global(.fx-trigger) { height: 22px; border: 1px solid var(--border2); border-radius: 999px; background: #f7f4ee; padding: 0 8px; font-size: 10.5px; }
   .md-model-badge :global(.fx-trigger:hover), .md-model-badge :global(.fx-trigger.open) { border-color: var(--accent); color: var(--accent); background: #fff; }

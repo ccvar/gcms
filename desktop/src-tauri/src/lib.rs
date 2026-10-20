@@ -2834,6 +2834,182 @@ mod workdir_tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn managed_mode_switch_roundtrip_keeps_schedule_history_and_limits_including_legacy_two_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("connections.json"), serde_json::to_vec(&[
+            test_conn(dir.path().to_str().unwrap())
+        ]).unwrap()).unwrap();
+        let conns = pack::ConnStore::new(dir.path()).unwrap();
+        let tasks = tasks::TaskStore::new(dir.path());
+        let store = managed::ManagedStore::new(dir.path());
+        let site = enable_managed(
+            &conns, &tasks, &store, "t".into(), "blog".into(), "博客".into(), "保留计划".into(),
+            5, 4, "l3".into(), 9000, "claude".into(), "opus".into(), "high".into(),
+            "codex".into(), "gpt-6-sol".into(), "medium".into(),
+            "按计划每日定制".into(), "计划审计定制".into(), "计划周报定制".into(),
+        ).unwrap();
+        store.mutate(&site.id, 123, |m| {
+            m.paused = true; m.fused_at = 121;
+            m.review_notes.push(managed::ReviewNote { ts: 1, post_id: 7, title: "草稿".into(), reason: "修正".into() });
+            m.reports.push(managed::ReportEntry { ts: 2, content: "历史周报".into(), metrics: Default::default() });
+        }).unwrap();
+        for (index, tid) in site.task_ids.iter().enumerate() {
+            tasks.mutate(tid, |task| {
+                task.enabled = index == 1; // Preserve per-task pause state, not merely site.paused.
+                task.interval_minutes = 123 + index as u64;
+                task.next_run = 98765 + index as u64;
+                task.last_run = 50;
+                task.last_status = "ok".into();
+                task.last_summary = "已完成".into();
+                task.last_conv_id = "conversation".into();
+                task.runs = 8;
+                task.history.push(tasks::TaskRun {
+                    ts: 50, ok: true, summary: "history".into(), sites: vec![], deferred: false,
+                });
+            }).unwrap();
+        }
+        tasks.mutate(&site.task_ids[1], |task| {
+            task.prompt = "用户从调整任务直接改的审计指令".into();
+        }).unwrap();
+        let before_site = serde_json::to_value(store.get(&site.id).unwrap()).unwrap();
+        let before_tasks = tasks.list();
+        for mode in ["growth", "plan", "growth"] {
+            let patch = serde_json::from_value(serde_json::json!({"mode":mode})).unwrap();
+            let results = update_managed_settings(&store, &tasks, "t", vec![site.id.clone()], patch).unwrap();
+            assert!(results.iter().all(|r| r.error.is_none()));
+            let current = store.get(&site.id).unwrap();
+            assert_eq!(current.mode.is_growth(), mode == "growth");
+            let mut current_value = serde_json::to_value(&current).unwrap();
+            let mut before = before_site.clone();
+            for key in ["mode", "growth", "mode_prompt_overrides", "custom_daily_prompt", "custom_audit_prompt", "custom_report_prompt", "updated_at"] {
+                current_value.as_object_mut().unwrap().remove(key);
+                before.as_object_mut().unwrap().remove(key);
+            }
+            assert_eq!(current_value, before, "site identity, limits and review/history preserved");
+            for old in &before_tasks {
+                let new = tasks.get(&old.id).unwrap();
+                let mut previous = serde_json::to_value(old).unwrap();
+                let mut updated = serde_json::to_value(&new).unwrap();
+                for key in ["title", "prompt", "task_type", "updated_at"] {
+                    previous.as_object_mut().unwrap().remove(key);
+                    updated.as_object_mut().unwrap().remove(key);
+                }
+                assert_eq!(updated, previous, "task schedule, model and history preserved");
+                assert_eq!(new.title.starts_with("增长托管"), mode == "growth");
+                if mode == "growth" {
+                    assert!(!new.prompt.contains("计划每日定制"));
+                }
+            }
+            let daily = tasks.get(&site.task_ids[0]).unwrap();
+            if mode == "plan" {
+                assert!(daily.prompt.contains("按计划每日定制"));
+                assert!(tasks.get(&site.task_ids[1]).unwrap().prompt.contains("用户从调整任务直接改的审计指令"));
+            }
+            assert_eq!(scheduled_task_perm_mode(&store.list(), &site.task_ids[1]),
+                if mode == "growth" { "plan" } else { "full" });
+        }
+        // P1 sites have only daily + audit tasks. Switching must not duplicate,
+        // recreate, or silently add a weekly task to those records.
+        store.mutate(&site.id, 150, |m| m.task_ids.truncate(2)).unwrap();
+        tasks.remove(&site.task_ids[2]).unwrap();
+        let legacy_ids = site.task_ids[..2].to_vec();
+        let legacy_times: Vec<_> = tasks.list().iter().map(|t| (t.id.clone(), t.next_run, t.interval_minutes)).collect();
+        for mode in ["plan", "growth", "plan"] {
+            let results = update_managed_settings(&store, &tasks, "t", vec![site.id.clone()],
+                serde_json::from_value(serde_json::json!({"mode":mode})).unwrap()).unwrap();
+            assert!(results.iter().all(|r| r.error.is_none()));
+            assert_eq!(store.get(&site.id).unwrap().task_ids, legacy_ids);
+            assert_eq!(tasks.list().len(), 2);
+            assert_eq!(tasks.list().iter().map(|t| (t.id.clone(), t.next_run, t.interval_minutes)).collect::<Vec<_>>(), legacy_times);
+        }
+        // Exercise an actual related-store IO error after the nonempty task list
+        // has been saved, not just a synthetic callback error.
+        let managed_before = std::fs::read(dir.path().join("managed.json")).unwrap();
+        let tasks_before = std::fs::read(dir.path().join("tasks.json")).unwrap();
+        std::fs::create_dir(dir.path().join("managed.json.tmp")).unwrap();
+        let results = update_managed_settings(&store, &tasks, "t", vec![site.id.clone()],
+            serde_json::from_str(r#"{"mode":"growth"}"#).unwrap()).unwrap();
+        assert!(results[0].error.is_some());
+        assert_eq!(std::fs::read(dir.path().join("managed.json")).unwrap(), managed_before);
+        assert_eq!(std::fs::read(dir.path().join("tasks.json")).unwrap(), tasks_before);
+    }
+
+    #[test]
+    fn managed_mode_switch_rejects_duplicate_missing_and_foreign_tasks() {
+        let mut site: managed::ManagedSite = serde_json::from_value(serde_json::json!({
+            "id":"m", "conn_id":"conn", "site_slug":"site", "site_name":"站点",
+            "mode":"plan", "level":"l0", "weekly_post_limit":3, "plan":"",
+            "task_ids":["daily","audit"], "paused":false, "created_at":1, "updated_at":1
+        })).unwrap();
+        let task = |id: &str| serde_json::from_value::<ScheduledTask>(serde_json::json!({
+            "id":id, "conn_id":"conn", "conn_name":"连接", "site_slug":"site", "site_name":"站点",
+            "task_type":"article", "brain":"claude", "model":"opus", "title":"title", "prompt":"prompt",
+            "interval_minutes":1440, "next_run":123456, "enabled":false,
+            "last_run":0, "last_status":"", "last_summary":"", "last_conv_id":"", "runs":0,
+            "created_at":1, "updated_at":1
+        })).unwrap();
+        let mut group = vec![task("daily"), task("audit")];
+        assert!(validate_managed_task_ownership(&site, &group).is_ok());
+        site.task_ids[1] = "daily".into();
+        assert!(validate_managed_task_ownership(&site, &group).is_err());
+        site.task_ids[1] = "missing".into();
+        assert!(validate_managed_task_ownership(&site, &group).is_err());
+        site.task_ids[1] = "audit".into();
+        group[1].conn_id = "other".into();
+        assert!(validate_managed_task_ownership(&site, &group).is_err());
+        group[1].conn_id = "conn".into();
+        group[1].site_slug = "other-site".into();
+        assert!(validate_managed_task_ownership(&site, &group).is_err());
+        group[1].site_slug = "site".into();
+        group[1].site_slugs = vec!["site".into(), "other-site".into()];
+        assert!(validate_managed_task_ownership(&site, &group).is_err());
+    }
+
+    #[test]
+    fn managed_mode_switch_rejects_running_tasks_and_does_not_restart_same_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = managed::ManagedStore::new(dir.path());
+        let site: managed::ManagedSite = serde_json::from_value(serde_json::json!({
+            "id":"m", "conn_id":"t", "site_slug":"blog", "site_name":"博客",
+            "mode":"plan", "level":"l0", "weekly_post_limit":3, "plan":"",
+            "task_ids":["daily","audit","report"], "paused":false, "created_at":1, "updated_at":1
+        })).unwrap();
+        store.upsert(site).unwrap();
+        let firing = HashSet::from(["audit".to_string()]);
+        let growth = serde_json::from_str(r#"{"mode":"growth"}"#).unwrap();
+        assert!(validate_managed_mode_switches(&store, &firing, &["m".into()], &growth).unwrap_err().contains("正在运行"));
+        let plan = serde_json::from_str(r#"{"mode":"plan"}"#).unwrap();
+        assert!(validate_managed_mode_switches(&store, &firing, &["m".into()], &plan).is_ok());
+        assert!(validate_managed_mode_switches(&store, &HashSet::new(), &["m".into()], &growth).is_ok());
+        assert_eq!(store.get("m").unwrap().mode, managed::ManagedMode::Plan);
+    }
+
+    #[test]
+    fn managed_mode_switch_task_transaction_rolls_back_related_commit_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let tasks = tasks::TaskStore::new(dir.path());
+        let task: ScheduledTask = serde_json::from_value(serde_json::json!({
+            "id":"original-task", "conn_id":"conn", "conn_name":"连接", "site_slug":"site", "site_name":"站点",
+            "task_type":"article", "brain":"claude", "model":"opus", "title":"original title", "prompt":"original prompt",
+            "interval_minutes":1440, "next_run":123456, "enabled":false,
+            "last_run":0, "last_status":"", "last_summary":"", "last_conv_id":"", "runs":0,
+            "created_at":1, "updated_at":1
+        })).unwrap();
+        tasks.upsert(task).unwrap();
+        let original_file = std::fs::read(dir.path().join("tasks.json")).unwrap();
+        let result: Result<(), String> = tasks.transaction(|original, save| {
+            let mut edited = original.to_vec();
+            edited[0].title = "changed title".into();
+            edited[0].prompt = "changed prompt".into();
+            save(&edited)?;
+            Err("related managed store failed".into())
+        });
+        assert_eq!(result.unwrap_err(), "related managed store failed");
+        assert_eq!(std::fs::read(dir.path().join("tasks.json")).unwrap(), original_file);
+        assert_eq!(tasks.get("original-task").unwrap().prompt, "original prompt");
+    }
+
     /// 开启托管：三个配套任务（每日/审计/周报）创建齐、厂商/模型/强度逐项透传、
     /// 等级与上限进 prompt、记录字段完整、同站重复开启被拒。
     #[test]
@@ -5214,15 +5390,18 @@ fn run_task_now(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let task = state.tasks.get(&id).ok_or("任务不存在")?;
     // 与调度器共享同一 running 集：正在跑就拒绝，避免重复触发。
-    {
+    let task = {
         let mut g = state.firing.lock().unwrap();
         if g.contains(&id) {
             return Err("这个任务正在运行中，请稍候".into());
         }
+        // Read after claiming the same lock used by mode switches, never run a
+        // prompt snapshot captured before a completed switch.
+        let task = state.tasks.get(&id).ok_or("任务不存在")?;
         g.insert(id.clone());
-    }
+        task
+    };
     // 若已到点，手动这次就消费掉到点槽，调度器不会再触发一次。
     let now = now_secs();
     if task.next_run > 0 && task.next_run <= now {
@@ -5279,22 +5458,24 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
 }
 
 fn sync_daily_prompt_checked(tasks: &tasks::TaskStore, m: &managed::ManagedSite) -> Result<(), String> {
-    fn write_if_changed(tasks: &tasks::TaskStore, task_id: &str, prompt: String) -> Result<(), String> {
+    for (task_id, prompt) in m.task_ids.iter().zip(managed_task_prompts(m)) {
         if tasks
             .get(task_id)
             .is_some_and(|current| current.prompt == prompt)
         {
-            return Ok(());
+            continue;
         }
         tasks.mutate(task_id, |task| {
             task.prompt = prompt.clone();
             task.updated_at = now_secs();
         })?.ok_or_else(|| format!("配套任务不存在：{task_id}"))?;
-        Ok(())
     }
+    Ok(())
+}
 
+fn managed_task_prompts(m: &managed::ManagedSite) -> [String; 3] {
     let growth_positioning = m.growth.as_ref().map(|growth| &growth.config.positioning);
-    if let Some(tid) = m.task_ids.first() {
+    let daily = {
         let generated = if m.mode.is_growth() {
             managed_growth_service::daily_prompt(
                 &m.site_name,
@@ -5311,14 +5492,13 @@ fn sync_daily_prompt_checked(tasks: &tasks::TaskStore, m: &managed::ManagedSite)
                 &m.audit_notes,
             )
         };
-        let p = if m.mode.is_growth() {
+        if m.mode.is_growth() {
             managed_growth_service::apply_daily_prompt(&m.custom_daily_prompt, generated, &m.level)
         } else {
             managed::apply_daily_prompt(&m.custom_daily_prompt, generated, &m.level)
-        };
-        write_if_changed(tasks, tid, p)?;
-    }
-    if let Some(tid) = m.task_ids.get(1) {
+        }
+    };
+    let audit = {
         let generated = if m.mode.is_growth() {
             managed_growth_service::scan_prompt(
                 &m.site_name,
@@ -5327,15 +5507,14 @@ fn sync_daily_prompt_checked(tasks: &tasks::TaskStore, m: &managed::ManagedSite)
         } else {
             managed::audit_prompt(&m.site_name)
         };
-        let p = if m.mode.is_growth() {
+        if m.mode.is_growth() {
             managed_growth_service::apply_readonly_prompt(&m.custom_audit_prompt, generated)
         } else {
             managed::apply_audit_prompt(&m.custom_audit_prompt, generated)
-        };
-        write_if_changed(tasks, tid, p)?;
-    }
+        }
+    };
     // 周报 prompt 带计划摘要（「计划关键词 vs 实际曝光词偏差」的对照基准），计划变了要跟着换。
-    if let Some(tid) = m.task_ids.get(2) {
+    let report = {
         let generated = if m.mode.is_growth() {
             managed_growth_service::report_prompt(
                 &m.site_name,
@@ -5344,14 +5523,13 @@ fn sync_daily_prompt_checked(tasks: &tasks::TaskStore, m: &managed::ManagedSite)
         } else {
             managed::report_prompt(&m.site_name, &m.plan)
         };
-        let p = if m.mode.is_growth() {
+        if m.mode.is_growth() {
             managed_growth_service::apply_readonly_prompt(&m.custom_report_prompt, generated)
         } else {
             managed::apply_report_prompt(&m.custom_report_prompt, generated)
-        };
-        write_if_changed(tasks, tid, p)?;
-    }
-    Ok(())
+        }
+    };
+    [daily, audit, report]
 }
 
 #[derive(serde::Serialize)]
@@ -5367,7 +5545,49 @@ fn managed_update_settings(
     for value in [&patch.primary, &patch.fallback].into_iter().flatten() {
         if !value.brain.is_empty() { validate_executor(&state.data_dir, &value.brain, &value.model)?; }
     }
+    // Hold through the writes; scheduler/manual runs also claim under this lock.
+    // Rejections happen before any site in a batch changes.
+    let firing = state.firing.lock().unwrap();
+    validate_managed_mode_switches(&state.managed, &firing, &ids, &patch)?;
     update_managed_settings(&state.managed, &state.tasks, &conn_id, ids, patch)
+}
+
+fn validate_managed_mode_switches(
+    store: &managed::ManagedStore,
+    firing: &HashSet<String>,
+    ids: &[String],
+    patch: &managed::SettingsPatch,
+) -> Result<(), String> {
+    let Some(target) = patch.mode.as_deref() else { return Ok(()) };
+    for id in ids {
+        if let Some(site) = store.get(id) {
+            if site.mode.is_growth() != (target == "growth")
+                && site.task_ids.iter().any(|id| firing.contains(id)) {
+                return Err(format!("{}：托管任务正在运行，请等待结束后再切换模式", site.site_name));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_managed_task_ownership(
+    site: &managed::ManagedSite,
+    tasks: &[ScheduledTask],
+) -> Result<(), String> {
+    let mut ids = HashSet::new();
+    if !(2..=3).contains(&site.task_ids.len()) {
+        return Err(format!("{}：配套任务不完整，请先修复任务", site.site_name));
+    }
+    for id in &site.task_ids {
+        let task = tasks.iter().find(|task| &task.id == id)
+            .ok_or_else(|| format!("{}：配套任务不存在，请先修复任务", site.site_name))?;
+        let targets = task.targets();
+        if !ids.insert(id) || task.conn_id != site.conn_id || targets.len() != 1
+            || targets[0].0 != site.site_slug {
+            return Err(format!("{}：配套任务归属异常，请先修复任务", site.site_name));
+        }
+    }
+    Ok(())
 }
 
 fn update_managed_settings(
@@ -5376,17 +5596,79 @@ fn update_managed_settings(
 ) -> Result<Vec<ManagedSettingsResult>, String> {
     if ids.is_empty() { return Err("请选择托管站点".into()); }
     let mut unique = std::collections::HashSet::new();
+    let current_tasks = tasks.list();
     // Validate the entire selection before any write (including fallback conflicts on each site).
     for id in &ids {
         if !unique.insert(id.clone()) { return Err("重复的托管记录".into()); }
         let mut site = managed_store.get(id).ok_or("托管记录不存在")?;
         patch.apply(&mut site, conn_id).map_err(|e| format!("{}：{e}", site.site_name))?;
-        if site.task_ids.len() != 3 || site.task_ids.iter().any(|tid| tasks.get(tid).is_none()) {
-            return Err(format!("{}：配套任务不完整，请先修复任务", site.site_name));
-        }
+        validate_managed_task_ownership(&site, &current_tasks)?;
     }
     Ok(ids.into_iter().map(|id| {
         let result = (|| -> Result<(), String> {
+            if patch.mode.is_some() {
+                // Commit all three task changes together, then the managed
+                // record. A failed record write restores the previous tasks.
+                return tasks.transaction(|current_tasks, save_tasks| {
+                    managed_store.mutate_checked(&id, now_secs(), |site| {
+                        validate_managed_task_ownership(site, current_tasks)?;
+                        let previous_mode = site.mode;
+                        if patch.mode.as_deref().is_some_and(|mode| {
+                            site.mode.is_growth() != (mode == "growth")
+                        }) {
+                            // "调整任务" can edit a task prompt directly. Archive
+                            // those edits too, not only wizard custom instructions.
+                            let previous_prompts = managed_task_prompts(site);
+                            for (index, tid) in site.task_ids.iter().enumerate() {
+                                let task = current_tasks.iter().find(|task| &task.id == tid)
+                                    .ok_or("配套任务不存在")?;
+                                if task.prompt != previous_prompts[index] {
+                                    match index {
+                                        0 => site.custom_daily_prompt = task.prompt.clone(),
+                                        1 => site.custom_audit_prompt = task.prompt.clone(),
+                                        2 => site.custom_report_prompt = task.prompt.clone(),
+                                        _ => unreachable!(),
+                                    }
+                                }
+                            }
+                        }
+                        patch.apply(site, conn_id)?;
+                        let mode_changed = previous_mode != site.mode;
+                        let prompts = managed_task_prompts(site);
+                        let labels = if site.mode.is_growth() {
+                            ["增长托管 · 每日执行", "增长托管 · 每周扫描", "增长托管 · 每周复盘"]
+                        } else {
+                            ["托管 · 每日内容", "托管 · 每周审计", "托管 · 每周周报"]
+                        };
+                        let mut next_tasks = current_tasks.to_vec();
+                        for (index, tid) in site.task_ids.iter().enumerate() {
+                            let task = next_tasks.iter_mut().find(|t| &t.id == tid)
+                                .ok_or("配套任务不存在")?;
+                            if mode_changed {
+                                task.title = format!("{} · {}", labels[index], site.site_name);
+                                task.task_type = if index == 0 { "article" } else { "free" }.into();
+                            }
+                            if mode_changed || patch.level.is_some() || patch.weekly_post_limit.is_some()
+                                || patch.weekly_edit_limit.is_some() {
+                                task.prompt = prompts[index].clone();
+                            }
+                            if patch.primary.is_some() {
+                                task.brain = site.brain.clone();
+                                task.model = site.model.clone();
+                                task.effort = site.effort.clone();
+                            }
+                            if patch.fallback.is_some() {
+                                task.fallback_brain = site.fallback_brain.clone();
+                                task.fallback_model = site.fallback_model.clone();
+                                task.fallback_effort = site.fallback_effort.clone();
+                            }
+                            task.updated_at = now_secs();
+                        }
+                        save_tasks(&next_tasks)
+                    })?.ok_or("托管记录不存在")?;
+                    Ok(())
+                });
+            }
             let site = managed_store.mutate_checked(&id, now_secs(), |m| patch.apply(m, conn_id))?
                 .ok_or("托管记录不存在")?;
             // Update only selected model groups; task schedules, history and pause state stay intact.
@@ -5749,6 +6031,7 @@ fn enable_managed(
         custom_daily_prompt: custom_daily_prompt.trim().to_string(),
         custom_audit_prompt: custom_audit_prompt.trim().to_string(),
         custom_report_prompt: custom_report_prompt.trim().to_string(),
+        mode_prompt_overrides: managed::ModePromptOverrides::default(),
         brain,
         model,
         effort,
@@ -5911,6 +6194,7 @@ async fn managed_growth_enable(
         custom_daily_prompt: custom_daily_prompt.trim().to_string(),
         custom_audit_prompt: custom_audit_prompt.trim().to_string(),
         custom_report_prompt: custom_report_prompt.trim().to_string(),
+        mode_prompt_overrides: managed::ModePromptOverrides::default(),
         brain,
         model,
         effort,
@@ -7674,8 +7958,15 @@ fn spawn_scheduler(app: AppHandle) {
                 .filter(|t| t.enabled && t.next_run <= now && t.next_run > 0)
                 .filter(|t| !running.lock().unwrap().contains(&t.id))
                 .collect();
-            for t in due {
-                running.lock().unwrap().insert(t.id.clone());
+            for candidate in due {
+                let t = {
+                    let mut active = running.lock().unwrap();
+                    if active.contains(&candidate.id) { continue; }
+                    let Some(current) = state.tasks.get(&candidate.id) else { continue };
+                    if !current.enabled || current.next_run == 0 || current.next_run > now { continue; }
+                    active.insert(current.id.clone());
+                    current
+                };
                 // 立刻推进 next_run，避免下一 tick 重复触发（并跳过错过的窗口）。
                 let mut adv = t.clone();
                 adv.advance_past(now);

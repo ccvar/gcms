@@ -364,6 +364,23 @@ pub struct GrowthManaged {
     pub state: GrowthState,
 }
 
+/// Custom instructions belong to a mode. Keep the inactive set so switching back
+/// restores the user's edits without feeding plan instructions to growth tasks.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ManagedPromptOverrides {
+    pub daily: String,
+    pub audit: String,
+    pub report: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModePromptOverrides {
+    pub plan: Option<ManagedPromptOverrides>,
+    pub growth: Option<ManagedPromptOverrides>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ManagedSite {
     pub id: String,
@@ -373,7 +390,7 @@ pub struct ManagedSite {
     /// 缺失时按计划托管读取，保证升级前已运行的站点行为完全不变。
     #[serde(default, deserialize_with = "deserialize_managed_mode")]
     pub mode: ManagedMode,
-    /// 仅增长托管使用；计划托管保持 None，不参与原任务与 prompt 路径。
+    /// 仅增长托管使用；切回计划托管后保留配置和机会历史，但不参与执行。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub growth: Option<GrowthManaged>,
     /// P1 只有 "l0"（试运行：只产草稿，人审人发）。
@@ -393,6 +410,8 @@ pub struct ManagedSite {
     pub custom_audit_prompt: String,
     #[serde(default)]
     pub custom_report_prompt: String,
+    #[serde(default)]
+    pub mode_prompt_overrides: ModePromptOverrides,
     /// 配套任务用的厂商/模型/强度（向导第 3 步选定；旧记录缺省为空）。
     #[serde(default)]
     pub brain: String,
@@ -483,6 +502,8 @@ pub struct ModelSetting {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsPatch {
+    /// Strictly validate writes; legacy record deserialization remains tolerant.
+    pub mode: Option<String>,
     pub primary: Option<ModelSetting>,
     pub fallback: Option<ModelSetting>,
     pub level: Option<String>,
@@ -494,10 +515,13 @@ pub struct SettingsPatch {
 impl SettingsPatch {
     pub fn apply(&self, site: &mut ManagedSite, conn_id: &str) -> Result<(), String> {
         if site.conn_id != conn_id { return Err("托管不属于当前工作区".into()); }
-        if self.primary.is_none() && self.fallback.is_none() && self.level.is_none()
+        if self.mode.is_none() && self.primary.is_none() && self.fallback.is_none() && self.level.is_none()
             && self.weekly_post_limit.is_none() && self.weekly_edit_limit.is_none()
             && self.token_weekly_budget.is_none() {
             return Err("请至少选择一个修改项".into());
+        }
+        if self.mode.as_ref().is_some_and(|v| !matches!(v.as_str(), "plan" | "growth")) {
+            return Err("托管模式无效".into());
         }
         for (model, optional) in [(&self.primary, false), (&self.fallback, true)] {
             if let Some(value) = model {
@@ -518,6 +542,31 @@ impl SettingsPatch {
             return Err("每周存量修改上限须为 1–20".into());
         }
         let mut next = site.clone();
+        if let Some(mode) = &self.mode {
+            let target = if mode == "growth" { ManagedMode::Growth } else { ManagedMode::Plan };
+            if next.mode != target {
+                let current = ManagedPromptOverrides {
+                    daily: next.custom_daily_prompt.clone(),
+                    audit: next.custom_audit_prompt.clone(),
+                    report: next.custom_report_prompt.clone(),
+                };
+                if next.mode.is_growth() {
+                    next.mode_prompt_overrides.growth = Some(current);
+                } else {
+                    next.mode_prompt_overrides.plan = Some(current);
+                }
+                let restored = if target.is_growth() {
+                    next.growth.get_or_insert_with(GrowthManaged::default);
+                    &next.mode_prompt_overrides.growth
+                } else {
+                    &next.mode_prompt_overrides.plan
+                }.clone().unwrap_or_default();
+                next.custom_daily_prompt = restored.daily;
+                next.custom_audit_prompt = restored.audit;
+                next.custom_report_prompt = restored.report;
+                next.mode = target;
+            }
+        }
         if let Some(v) = &self.primary {
             next.brain = v.brain.clone(); next.model = v.model.clone(); next.effort = v.effort.clone();
         }
@@ -1550,6 +1599,7 @@ mod tests {
             custom_daily_prompt: String::new(),
             custom_audit_prompt: String::new(),
             custom_report_prompt: String::new(),
+            mode_prompt_overrides: ModePromptOverrides::default(),
             brain: "claude".into(),
             model: "sonnet".into(),
             effort: String::new(),
@@ -1591,7 +1641,7 @@ mod tests {
     #[test]
     fn settings_patch_rejects_invalid_values_without_mutation() {
         for json in [r#"{}"#, r#"{"weekly_post_limit":0}"#, r#"{"weekly_post_limit":51}"#,
-            r#"{"weekly_edit_limit":21}"#, r#"{"level":"l9"}"#,
+            r#"{"weekly_edit_limit":21}"#, r#"{"level":"l9"}"#, r#"{"mode":"future"}"#,
             r#"{"primary":{"brain":"unknown","model":"x","effort":""}}"#,
             r#"{"fallback":{"brain":"claude","model":"sonnet","effort":""}}"#] {
             let mut m = site("id", "blog");
@@ -1612,6 +1662,43 @@ mod tests {
         patch.apply(&mut m, "c1").unwrap();
         assert!(m.mode.is_growth()); assert_eq!(m.plan, "定位：科技博客");
         assert_eq!(m.brain, "codex"); assert_eq!(m.model, ""); assert!(m.fallback_brain.is_empty());
+    }
+
+    #[test]
+    fn mode_switch_preserves_state_and_restores_each_modes_custom_prompts() {
+        let mut m = site("id", "blog");
+        m.custom_daily_prompt = "计划每日定制".into();
+        m.custom_audit_prompt = "计划审计定制".into();
+        m.custom_report_prompt = "计划周报定制".into();
+        let plan: SettingsPatch = serde_json::from_str(r#"{"mode":"plan"}"#).unwrap();
+        let growth: SettingsPatch = serde_json::from_str(r#"{"mode":"growth"}"#).unwrap();
+        growth.apply(&mut m, "c1").unwrap();
+        assert!(m.mode.is_growth());
+        assert!(m.growth.is_some());
+        assert!(m.custom_daily_prompt.is_empty());
+        assert!(m.custom_audit_prompt.is_empty());
+        assert!(m.custom_report_prompt.is_empty());
+        assert_eq!(m.plan, "定位：科技博客");
+        m.growth.as_mut().unwrap().state.last_scan_at = 1234;
+        m.growth.as_mut().unwrap().config.positioning.audience = "用户定位".into();
+        m.custom_daily_prompt = "增长每日定制".into();
+        m.custom_audit_prompt = "增长扫描定制".into();
+        m.custom_report_prompt = "增长复盘定制".into();
+        let before_noop = serde_json::to_value(&m).unwrap();
+        growth.apply(&mut m, "c1").unwrap();
+        assert_eq!(serde_json::to_value(&m).unwrap(), before_noop);
+        plan.apply(&mut m, "c1").unwrap();
+        assert!(!m.mode.is_growth());
+        assert_eq!(m.custom_daily_prompt, "计划每日定制");
+        assert_eq!(m.custom_audit_prompt, "计划审计定制");
+        assert_eq!(m.custom_report_prompt, "计划周报定制");
+        assert_eq!(m.growth.as_ref().unwrap().state.last_scan_at, 1234);
+        growth.apply(&mut m, "c1").unwrap();
+        assert_eq!(m.custom_daily_prompt, "增长每日定制");
+        assert_eq!(m.custom_audit_prompt, "增长扫描定制");
+        assert_eq!(m.custom_report_prompt, "增长复盘定制");
+        assert_eq!(m.growth.as_ref().unwrap().config.positioning.audience, "用户定位");
+        assert_eq!(m.task_ids, vec!["t-daily", "t-audit", "t-report"]);
     }
 
     #[test]

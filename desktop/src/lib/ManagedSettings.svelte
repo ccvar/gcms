@@ -3,7 +3,7 @@
   import { effortAfterModelPick, type ModelOption } from './modelSelection';
   import Dropdown from './Dropdown.svelte';
   import { untrack } from 'svelte';
-  import { settingLabels, validateManagedPatch, type ManagedSettingsPatch, type ManagedSettingsTarget, type SettingKey } from './managedSettings';
+  import { managedModeOptions, managedModeSwitchNotice, settingLabels, validateManagedPatch, type ManagedMode, type ManagedSettingsPatch, type ManagedSettingsTarget, type SettingKey } from './managedSettings';
   let { targets, options, levels, busy = false, error = '', onsave, onclose }: {
     targets: ManagedSettingsTarget[];
     options: ModelOption[];
@@ -15,6 +15,7 @@
   const first = untrack(()=>targets[0]);
   const batch = $derived(targets.length > 1);
   let selected = $state<SettingKey[]>([]);
+  let mode = $state<ManagedMode>(first.mode === 'growth' ? 'growth' : 'plan');
   let primary = $state(`${first.brain}::${first.model}`);
   let effort = $state(first.effort);
   let fallback = $state(`${first.fallback_brain || 'codex'}::${first.fallback_model || ''}`);
@@ -39,12 +40,12 @@
   }
   function mark(key: SettingKey) { if (!selected.includes(key)) selected = [...selected, key]; }
   function mixed(key: SettingKey) {
-    const value=(t: ManagedSettingsTarget)=>key==='primary'?[t.brain,t.model,t.effort]:key==='fallback'?[t.fallback_brain || '',t.fallback_model || '',t.fallback_effort || '']:t[key];
+    const value=(t: ManagedSettingsTarget)=>key==='mode'?(t.mode || 'plan'):key==='primary'?[t.brain,t.model,t.effort]:key==='fallback'?[t.fallback_brain || '',t.fallback_model || '',t.fallback_effort || '']:t[key];
     return targets.some(t=>JSON.stringify(value(t))!==JSON.stringify(value(targets[0])));
   }
   function model(value: string, effort: string) { const i = value.indexOf('::'); return {brain:value.slice(0,i),model:value.slice(i+2),effort}; }
   function submit() {
-    const all: ManagedSettingsPatch = {primary:model(primary,effort),fallback:fallbackEnabled?model(fallback,fallbackEffort):{brain:'',model:'',effort:''},level,weekly_post_limit:posts,weekly_edit_limit:edits,token_weekly_budget:budget};
+    const all: ManagedSettingsPatch = {mode,primary:model(primary,effort),fallback:fallbackEnabled?model(fallback,fallbackEffort):{brain:'',model:'',effort:''},level,weekly_post_limit:posts,weekly_edit_limit:edits,token_weekly_budget:budget};
     const patch = Object.fromEntries(selected.map(key => [key,all[key]])) as ManagedSettingsPatch;
     localError = validateManagedPatch(patch, targets);
     if (!localError) onsave(patch);
@@ -63,7 +64,10 @@
           <div class="setting" class:chosen={selected.includes(key)}>
             <label class="field-label"><input type="checkbox" checked={selected.includes(key)} onchange={e => selected = e.currentTarget.checked ? [...selected,key] : selected.filter(k=>k!==key)} /><span>{settingLabels[key]}{#if mixed(key)}<small class="mixed">各站当前值不同</small>{/if}</span></label>
             <div class="control">
-              {#if key === 'primary'}
+              {#if key === 'mode'}
+                <Dropdown value={mode} options={managedModeOptions} onchange={v=>{mode=v as ManagedMode;mark(key);}} ariaLabel="托管模式" />
+                <small>{selected.includes('mode') ? managedModeSwitchNotice : '可在计划托管与增长托管之间切换，不改变托管级别。'}</small>
+              {:else if key === 'primary'}
                 <ModelFx {options} value={primary} {effort} onpick={(v:string)=>{effort=effortAfterModelPick(primary,v,effort,options);primary=v;mark(key);}} oneffort={(v:string)=>{effort=v;mark(key);}} />
               {:else if key === 'fallback'}
                 <label class="fallback"><input type="checkbox" bind:checked={fallbackEnabled} onchange={()=>mark(key)} />启用备用模型</label>
