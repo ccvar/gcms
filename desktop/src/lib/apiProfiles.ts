@@ -30,6 +30,19 @@ export function apiProtocolLabel(protocol: ApiProtocol): string {
   return API_PROTOCOL_OPTIONS.find(option => option.value === protocol)?.sub ?? protocol;
 }
 
+/** Suggested defaults apply only to new, untouched connection drafts. */
+export function defaultApiMaxOutput(protocol: ApiProtocol): number {
+  return protocol === 'anthropic_messages' ? 32768 : 8192;
+}
+
+export function apiMaxOutputAfterProtocolChange(
+  protocol: ApiProtocol,
+  current: number,
+  options: { existing: boolean; edited: boolean },
+): number {
+  return options.existing || options.edited ? current : defaultApiMaxOutput(protocol);
+}
+
 export function parseApiModels(text: string): string[] {
   return [...new Set(text.split(/[\n,，]+/).map(model => model.trim()).filter(Boolean))];
 }

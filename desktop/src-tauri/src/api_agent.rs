@@ -1,5 +1,6 @@
 //! Native API agent. Protocol transcripts are kept locally, never mixed with CLI sessions.
-//! No automatic retry/fallback: a disconnected request may already have executed a tool.
+//! Only a confirmed Claude output-limit response can be regenerated once. Never
+//! replay tools or automatically retry network failures / uncertain side effects.
 use crate::agent::{RunRegistry, TurnEvent, TurnResult, TurnUsage};
 use crate::api_profiles::{self, ApiProfile};
 use crate::convo::ToolCall;
@@ -14,6 +15,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::ipc::Channel;
 
+#[path = "api_agent_recovery.rs"]
+mod recovery;
 #[path = "api_agent_tools.rs"]
 mod tool_runtime;
 
@@ -28,7 +31,7 @@ struct History {
     protocol: String,
     system: String,
     items: Vec<Value>,
-    /// Set before side effects; cleared only after a complete assistant response.
+    /// Set before side effects; cleared atomically with all recorded tool results.
     interrupted: bool,
 }
 
@@ -127,6 +130,7 @@ pub(crate) async fn run_turn(
     work_dir: String,
     profile_id: String,
     model: String,
+    effort: String,
     mode: PermMode,
     selected_skills: Vec<String>,
     data_dir: PathBuf,
@@ -155,6 +159,7 @@ pub(crate) async fn run_turn(
         &work_dir,
         &profile_id,
         &model,
+        &effort,
         mode,
         &selected_skills,
         &data_dir,
@@ -193,6 +198,7 @@ async fn execute(
     work_dir: &str,
     profile_id: &str,
     model: &str,
+    effort: &str,
     mode: PermMode,
     selected_skills: &[String],
     data_dir: &Path,
@@ -219,6 +225,9 @@ async fn execute(
     if !profile.models.iter().any(|m| m == model) {
         return Err("该模型已不在此 API 服务中，请重新选择模型".into());
     }
+    // Reject stale/unsupported explicit selections before creating or appending
+    // a transcript. Never display an effort while silently using a default.
+    crate::api_reasoning::validate(&profile.protocol, model, effort)?;
     let work = std::fs::canonicalize(work_dir).map_err(|e| format!("工作目录不可用：{e}"))?;
     let id = session_id(session_ref, is_first)?;
     let scope = scope(conn, &work, profile, model, turn_id);
@@ -242,16 +251,23 @@ async fn execute(
         if raw.len() > MAX_HISTORY_BYTES {
             return Err("API 会话历史超过安全上限".into());
         }
-        let value: History =
+        let mut value: History =
             serde_json::from_slice(&raw).map_err(|_| "API 会话历史损坏，未自动覆盖".to_string())?;
         if value.scope != scope || value.protocol != profile.protocol {
             return Err("API 会话归属不匹配".into());
         }
         if value.interrupted {
-            return Err(
-                "上一回合在工具执行期间中断。为避免重复发布或重复写入，请核对执行记录后新建会话"
-                    .into(),
-            );
+            // Older versions kept this flag until final assistant text, even
+            // when every tool result was already durable. Recover only after
+            // validating the ENTIRE transcript, never from a flag alone.
+            if !recovery::can_resume_legacy(&value.protocol, &value.items) {
+                return Err(
+                    "上一回合有工具执行结果未确认。为避免重复发布或重复写入，请核对执行记录后新建会话"
+                        .into(),
+                );
+            }
+            value.interrupted = false;
+            save_history(&path, &value)?;
         }
         value
     } else {
@@ -269,12 +285,48 @@ async fn execute(
         .push(json!({"role":"user", "content":message}));
     save_history(&path, &history)?;
     result.session_ref = format!("api:{id}");
+    execute_model_loop(
+        profile,
+        model,
+        effort,
+        &loaded.api_key,
+        &tools,
+        &mut history,
+        &path,
+        channel,
+        site_key,
+        result,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_model_loop(
+    profile: &ApiProfile,
+    model: &str,
+    effort: &str,
+    api_key: &str,
+    tools: &tool_runtime::Tools<'_>,
+    history: &mut History,
+    path: &Path,
+    channel: &Channel<TurnEvent>,
+    site_key: &str,
+    result: &mut TurnResult,
+) -> Result<(), String> {
     let instructions = format!("{}\n\n{}", history.system, tools.instructions());
     let client = api_profiles::http_client()?;
+    let mut recovered = false;
+    let mut retry_pending = false;
     for _ in 0..MAX_ROUNDS {
+        let instructions = if recovered {
+            format!("{instructions}\n本轮曾有模型回复因输出上限被截断，该回复中的工具调用均未执行、未写入历史。请根据现有完整工具结果继续下一步，不要重做已经完成的操作。保持回复简短，一次只生成一个较小文件或一个步骤，避免在单次工具参数中放入整个项目。")
+        } else {
+            instructions.clone()
+        };
         let body = request_body(
             profile,
             model,
+            effort,
             &instructions,
             &history.items,
             &tools.definitions(),
@@ -282,15 +334,68 @@ async fn execute(
         if body.to_string().len() > MAX_HISTORY_BYTES {
             return Err("上下文已达到安全上限，请新建会话；未自动丢弃历史".into());
         }
-        let reply = stream_request(&client, profile, &loaded.api_key, body, |delta| {
-            let safe = tool_runtime::redact(delta, &[&loaded.api_key, site_key]);
+        let text_checkpoint = result.text.len();
+        let reply = stream_request(&client, profile, api_key, body, |delta| {
+            let safe = tool_runtime::redact(delta, &[api_key, site_key]);
             result.text.push_str(&safe);
             let _ = channel.send(TurnEvent::Delta { text: safe });
         })
         .await
-        .map_err(|e| tool_runtime::redact(&e, &[&loaded.api_key, site_key]))?;
+        .map_err(|e| tool_runtime::redact(&e, &[api_key, site_key]))?;
         add_usage(&mut result.usage, &reply.usage);
+        if reply.output_limited {
+            // A confirmed terminal max_tokens response cannot run ANY tools,
+            // even complete-looking calls preceding a clipped JSON block.
+            // Keep its billed usage, but neither its text nor arguments enter
+            // model history. The next request includes all prior tool results.
+            if recovered {
+                return Err(format!("Claude 单次输出达到 {} token 上限（max_tokens），自动恢复一次后仍未完成。已保存此前完整工具结果；可在设置 → API 服务 → 高级设置提高单次最大输出 token，或要求分文件、分步骤生成后继续，无需重建会话。", profile.max_output_tokens));
+            }
+            recovered = true;
+            retry_pending = true;
+            result.text.truncate(text_checkpoint);
+            let _ = channel.send(TurnEvent::TextReset {
+                text: result.text.clone(),
+            });
+            let _ = channel.send(TurnEvent::Activity {
+                activity_id: "api-output-recovery".into(),
+                label: "输出达到上限，正在恢复".into(),
+                detail: format!(
+                    "按原上限 {} token 重新生成一次；不会重放此前工具操作",
+                    profile.max_output_tokens
+                ),
+                error: String::new(),
+                status: "running".into(),
+                kind: "reasoning".into(),
+                phase: "缩短输出，分步骤继续".into(),
+                current: None,
+                total: None,
+            });
+            continue;
+        }
+        if retry_pending {
+            retry_pending = false;
+            let _ = channel.send(TurnEvent::Activity {
+                activity_id: "api-output-recovery".into(),
+                label: "输出恢复完成".into(),
+                detail: "继续处理当前回复；此前工具结果已保留".into(),
+                error: String::new(),
+                status: "completed".into(),
+                kind: "reasoning".into(),
+                phase: "输出恢复完成".into(),
+                current: None,
+                total: None,
+            });
+        }
         let calls = reply.calls()?;
+        if calls
+            .iter()
+            .any(|call| recorded_call_id(&profile.protocol, &history.items, &call.id))
+        {
+            return Err(
+                "模型返回了已记录的工具调用 ID，已阻止重复执行；请核对执行记录后继续".into(),
+            );
+        }
         history.items.extend(reply.items);
         if calls.is_empty() {
             history.interrupted = false;
@@ -301,8 +406,7 @@ async fn execute(
         save_history(&path, &history)?;
         let mut outputs = Vec::new();
         for call in calls {
-            let detail =
-                tool_runtime::redact(&call.arguments.to_string(), &[&loaded.api_key, site_key]);
+            let detail = tool_runtime::redact(&call.arguments.to_string(), &[api_key, site_key]);
             result.tools.push(ToolCall {
                 label: call.name.clone(),
                 detail: detail.clone(),
@@ -330,7 +434,7 @@ async fn execute(
             }
             let safe = crate::agent::redact_gcms_unlock_challenges(&tool_runtime::redact(
                 &output.to_string(),
-                &[&loaded.api_key, site_key],
+                &[api_key, site_key],
             ));
             activity(
                 channel,
@@ -343,6 +447,10 @@ async fn execute(
             outputs.push((call.id, safe, failed));
         }
         append_tool_outputs(&profile.protocol, &mut history.items, outputs)?;
+        // Clear only alongside all results in the same atomic write. A crash
+        // mid-batch or failed save leaves the on-disk flag true, so unfinished
+        // side effects remain blocked rather than being replayed.
+        history.interrupted = false;
         save_history(&path, &history)?;
     }
     Err("本轮已达到 32 次模型调用上限，已停止；请核对执行记录，避免重复操作".into())
@@ -372,6 +480,7 @@ fn activity(
 fn request_body(
     profile: &ApiProfile,
     model: &str,
+    effort: &str,
     system: &str,
     items: &[Value],
     definitions: &[Value],
@@ -381,25 +490,35 @@ fn request_body(
         "anthropic_messages" => json!({"name":d["name"],"description":d["description"],"input_schema":d["parameters"]}),
         _ => json!({"type":"function","function":d}),
     }).collect();
-    match profile.protocol.as_str() {
-        "openai_responses" => Ok(
+    let mut body = match profile.protocol.as_str() {
+        "openai_responses" => {
             json!({"model":model,"instructions":system,"input":items,"tools":tools,
-            "stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":profile.max_output_tokens}),
-        ),
-        "anthropic_messages" => Ok(
+            "stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":profile.max_output_tokens})
+        }
+        "anthropic_messages" => {
             json!({"model":model,"system":system,"messages":items,"tools":tools,
-            "stream":true,"max_tokens":profile.max_output_tokens}),
-        ),
+            "stream":true,"max_tokens":profile.max_output_tokens})
+        }
         "openai_chat" => {
             let mut messages = vec![json!({"role":"system","content":system})];
             messages.extend_from_slice(items);
-            Ok(
-                json!({"model":model,"messages":messages,"tools":tools,"stream":true,
-                "stream_options":{"include_usage":true},"max_tokens":profile.max_output_tokens}),
-            )
+            let mut body = json!({"model":model,"messages":messages,"tools":tools,"stream":true,
+                "stream_options":{"include_usage":true}});
+            // Modern OpenAI reasoning models reject the legacy max_tokens key.
+            // Keep the configured cap; unrelated compatible endpoints retain
+            // the existing parameter rather than inheriting an unknown schema.
+            let limit_key = if crate::api_reasoning::uses_chat_completion_tokens(model) {
+                "max_completion_tokens"
+            } else {
+                "max_tokens"
+            };
+            body[limit_key] = json!(profile.max_output_tokens);
+            body
         }
-        _ => Err("此 API 协议不受支持，未自动改用其他协议".into()),
-    }
+        _ => return Err("此 API 协议不受支持，未自动改用其他协议".into()),
+    };
+    crate::api_reasoning::apply(&profile.protocol, model, effort, &mut body)?;
+    Ok(body)
 }
 
 fn append_tool_outputs(
@@ -416,6 +535,23 @@ fn append_tool_outputs(
     Ok(())
 }
 
+fn recorded_call_id(protocol: &str, items: &[Value], id: &str) -> bool {
+    items.iter().any(|item| match protocol {
+        "anthropic_messages" if item["role"] == "assistant" => {
+            item["content"].as_array().is_some_and(|blocks| {
+                blocks
+                    .iter()
+                    .any(|block| block["type"] == "tool_use" && block["id"] == id)
+            })
+        }
+        "openai_responses" => item["type"] == "function_call" && item["call_id"] == id,
+        "openai_chat" if item["role"] == "assistant" => item["tool_calls"]
+            .as_array()
+            .is_some_and(|calls| calls.iter().any(|call| call["id"] == id)),
+        _ => false,
+    })
+}
+
 struct Call {
     id: String,
     name: String,
@@ -425,9 +561,15 @@ struct Reply {
     protocol: String,
     items: Vec<Value>,
     usage: TurnUsage,
+    // A completed stream can still have hit its output budget. Such a response
+    // carries usage only: none of its text, thinking or tools may be replayed.
+    output_limited: bool,
 }
 impl Reply {
     fn calls(&self) -> Result<Vec<Call>, String> {
+        if self.output_limited {
+            return Err("模型输出达到上限，本次响应中的工具均未执行".into());
+        }
         let mut calls = Vec::new();
         for item in &self.items {
             let raw: Vec<&Value> = match self.protocol.as_str() {
@@ -558,6 +700,7 @@ impl Sse {
 struct Accumulator {
     items: BTreeMap<usize, Value>,
     partial: BTreeMap<usize, String>,
+    closed_blocks: HashSet<usize>,
     text: String,
     usage: TurnUsage,
     complete: bool,
@@ -594,9 +737,15 @@ impl Accumulator {
             "anthropic_messages" => match v["type"].as_str().unwrap_or("") {
                 "message_start" => self.usage = usage(&v["message"]["usage"]),
                 "content_block_start" => {
+                    if self.items.contains_key(&index) {
+                        return Err("API 内容块序号重复，未执行工具".into());
+                    }
                     self.items.insert(index, v["content_block"].clone());
                 }
                 "content_block_delta" => {
+                    if self.closed_blocks.contains(&index) {
+                        return Err("API 内容块已结束，未执行工具".into());
+                    }
                     let item = self.items.get_mut(&index).ok_or("API 工具流顺序异常")?;
                     let d = &v["delta"];
                     match d["type"].as_str().unwrap_or("") {
@@ -604,11 +753,14 @@ impl Accumulator {
                             delta = d["text"].as_str().unwrap_or("").into();
                             append(item, "text", &delta);
                         }
-                        "input_json_delta" => self
-                            .partial
-                            .entry(index)
-                            .or_default()
-                            .push_str(d["partial_json"].as_str().unwrap_or("")),
+                        "input_json_delta" => {
+                            if item["type"] != "tool_use" {
+                                return Err("API 工具参数出现在非工具内容块中".into());
+                            }
+                            self.partial.entry(index).or_default().push_str(
+                                d["partial_json"].as_str().ok_or("API 工具参数片段无效")?,
+                            );
+                        }
                         "thinking_delta" => {
                             append(item, "thinking", d["thinking"].as_str().unwrap_or(""))
                         }
@@ -619,10 +771,11 @@ impl Accumulator {
                     }
                 }
                 "content_block_stop" => {
-                    if let Some(args) = self.partial.remove(&index) {
-                        self.items.get_mut(&index).ok_or("API 工具流顺序异常")?["input"] =
-                            serde_json::from_str(&args).map_err(|_| "API 工具参数 JSON 不完整")?;
+                    if !self.items.contains_key(&index) || !self.closed_blocks.insert(index) {
+                        return Err("API 内容块结束顺序异常".into());
                     }
+                    // A capped tool can end with incomplete JSON. Wait until
+                    // message_stop tells us whether to validate or discard it.
                 }
                 "message_delta" => {
                     self.stop = v["delta"]["stop_reason"].as_str().unwrap_or("").into();
@@ -633,7 +786,7 @@ impl Accumulator {
                 "message_stop" => {
                     if !matches!(
                         self.stop.as_str(),
-                        "end_turn" | "tool_use" | "stop_sequence"
+                        "end_turn" | "tool_use" | "stop_sequence" | "max_tokens"
                     ) {
                         return Err(format!("Claude 回合未正常完成：{}", self.stop));
                     }
@@ -676,9 +829,51 @@ impl Accumulator {
         self.text.push_str(&delta);
         Ok(delta)
     }
-    fn finish(self, protocol: &str) -> Result<Reply, String> {
+    fn finish(mut self, protocol: &str) -> Result<Reply, String> {
         if !self.complete {
             return Err("API 连接在回合完成前断开，未标记成功，也不会自动重试".into());
+        }
+        if protocol == "anthropic_messages"
+            && self.items.values().any(|block| {
+                !matches!(
+                    block["type"].as_str(),
+                    Some("text" | "thinking" | "redacted_thinking" | "tool_use")
+                )
+            })
+        {
+            // No server tools are registered by this executor. Never regenerate
+            // a response containing unknown/provider-side execution blocks.
+            return Err(
+                "Claude 返回了不支持的内容或服务端工具，无法安全恢复，未执行本地工具".into(),
+            );
+        }
+        if protocol == "anthropic_messages" && self.stop == "max_tokens" {
+            // Discard the entire capped response, including fully formed tool
+            // blocks before the truncated one. The caller may retry only from
+            // its already persisted, fully acknowledged tool checkpoint.
+            return Ok(Reply {
+                protocol: protocol.into(),
+                items: vec![],
+                usage: self.usage,
+                output_limited: true,
+            });
+        }
+        if protocol == "anthropic_messages" {
+            let has_tools = self.items.values().any(|block| block["type"] == "tool_use");
+            if (self.stop == "tool_use") != has_tools {
+                return Err("Claude 结束状态与工具调用内容不一致，未执行工具".into());
+            }
+            if self
+                .items
+                .keys()
+                .any(|index| !self.closed_blocks.contains(index))
+            {
+                return Err("API 内容块未完整结束，未执行工具".into());
+            }
+            for (index, args) in self.partial {
+                self.items.get_mut(&index).ok_or("API 工具流顺序异常")?["input"] =
+                    serde_json::from_str(&args).map_err(|_| "API 工具参数 JSON 不完整")?;
+            }
         }
         let items = match protocol {
             "openai_responses" => self.items.into_values().collect(),
@@ -697,6 +892,7 @@ impl Accumulator {
             protocol: protocol.into(),
             items,
             usage: self.usage,
+            output_limited: false,
         })
     }
 }
@@ -798,10 +994,14 @@ async fn stream_request(
 }
 
 #[cfg(test)]
+#[path = "api_agent_execution_tests.rs"]
+mod execution_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    fn profile(protocol: &str, url: &str) -> ApiProfile {
+    pub(super) fn profile(protocol: &str, url: &str) -> ApiProfile {
         ApiProfile {
             id: "11111111-1111-4111-8111-111111111111".into(),
             name: "mock".into(),
@@ -813,18 +1013,18 @@ mod tests {
             max_output_tokens: 512,
         }
     }
-    fn conn() -> Connection {
+    pub(super) fn conn() -> Connection {
         serde_json::from_value(
             json!({"id":"workspace-a","name":"test","kind":"workspace","api_base":"","skill_dir":"",
             "key_prefix":"","key_kind":"","created_at":""}),
         )
         .unwrap()
     }
-    fn event(v: Value) -> String {
+    pub(super) fn event(v: Value) -> String {
         format!("data: {}\n\n", v)
     }
     /// Local-only HTTP fixture, inspecting actual JSON and auth headers without credential vault access.
-    async fn server(
+    pub(super) async fn server(
         responses: Vec<(u16, String)>,
     ) -> (String, tokio::task::JoinHandle<Vec<(String, Value)>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -887,6 +1087,45 @@ mod tests {
             data.extend(parser.push(&[*b]).unwrap());
         }
         assert_eq!(data, vec!["{\"text\":\"你好\"}"]);
+    }
+    #[test]
+    fn api_default_requests_omit_all_reasoning_controls() {
+        for protocol in ["openai_responses", "anthropic_messages", "openai_chat"] {
+            for model in ["test-model", "gpt-6-sol", "claude-sonnet-5-5"] {
+                let p = profile(protocol, "https://example.test/v1");
+                let body = request_body(&p, model, "", "system", &[], &[]).unwrap();
+                for key in ["reasoning", "reasoning_effort", "thinking", "output_config"] {
+                    assert!(
+                        body.get(key).is_none(),
+                        "default {protocol}/{model} added {key}"
+                    );
+                }
+                assert_eq!(body["model"], model);
+            }
+        }
+    }
+    #[test]
+    fn api_request_rejects_invalid_effort_without_falling_back() {
+        let p = profile("anthropic_messages", "https://example.test/v1");
+        assert!(request_body(&p, "claude-sonnet-5-5", "api:ultra", "", &[], &[]).is_err());
+        assert!(request_body(&p, "claude-opus-4-6", "api:xhigh", "", &[], &[]).is_err());
+        assert!(request_body(&p, "test-model", "api:high", "", &[], &[]).is_err());
+        let p = profile("openai_chat", "https://example.test/v1");
+        assert!(request_body(&p, "gpt-6-sol", "api:high", "", &[], &[]).is_err());
+    }
+    #[test]
+    fn chat_reasoning_uses_completion_limit_without_changing_compatible_models() {
+        let p = profile("openai_chat", "https://example.test/v1");
+        let body = request_body(&p, "gpt-5.6-sol", "api:high", "system", &[], &[]).unwrap();
+        assert_eq!(body["reasoning_effort"], "high");
+        assert_eq!(body["max_completion_tokens"], p.max_output_tokens);
+        assert!(body.get("max_tokens").is_none());
+        let body = request_body(&p, "gpt-6-sol", "api:none", "system", &[], &[]).unwrap();
+        assert_eq!(body["reasoning_effort"], "none");
+        assert_eq!(body["max_completion_tokens"], p.max_output_tokens);
+        let body = request_body(&p, "custom-compatible-model", "", "system", &[], &[]).unwrap();
+        assert_eq!(body["max_tokens"], p.max_output_tokens);
+        assert!(body.get("max_completion_tokens").is_none());
     }
     #[test]
     fn histories_are_scoped_to_connection_conversation_profile_model_endpoint() {
@@ -960,12 +1199,146 @@ mod tests {
         let reply = Reply {
             protocol: "openai_responses".into(),
             usage: TurnUsage::default(),
+            output_limited: false,
             items: vec![
                 json!({"type":"function_call","call_id":"a","name":"write_file","arguments":"{}"}),
                 json!({"type":"function_call","call_id":"a","name":"write_file","arguments":"{}"}),
             ],
         };
         assert!(reply.calls().is_err());
+    }
+    fn anthropic_accumulator(events: Vec<Value>) -> Accumulator {
+        let mut accumulator = Accumulator::default();
+        accumulator.event("anthropic_messages", &json!({
+            "type":"message_start", "message":{"usage":{
+                "input_tokens":120, "cache_read_input_tokens":30, "cache_creation_input_tokens":10
+            }}
+        })).unwrap();
+        for event in events {
+            accumulator.event("anthropic_messages", &event).unwrap();
+        }
+        accumulator
+    }
+    fn anthropic_tool_events(arguments: &str, closed: bool) -> Vec<Value> {
+        let mut events = vec![
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"write-1","name":"write_file","input":{}}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":arguments}}),
+        ];
+        if closed {
+            events.push(json!({"type":"content_block_stop","index":0}));
+        }
+        events
+    }
+    fn stop_anthropic(accumulator: &mut Accumulator, reason: &str) -> Result<String, String> {
+        accumulator.event("anthropic_messages", &json!({
+            "type":"message_delta", "delta":{"stop_reason":reason}, "usage":{"output_tokens":8192}
+        }))?;
+        accumulator.event("anthropic_messages", &json!({"type":"message_stop"}))
+    }
+    #[test]
+    fn anthropic_output_limit_discards_text_thinking_and_every_tool_block() {
+        let cases = vec![
+            vec![
+                json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+                json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"unfinished answer"}}),
+                json!({"type":"content_block_stop","index":0}),
+            ],
+            vec![
+                json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}),
+                json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"unfinished private reasoning"}}),
+                json!({"type":"content_block_stop","index":0}),
+            ],
+            anthropic_tool_events("{\"path\":\"index.html\",\"content\":\"incomplete", true),
+            anthropic_tool_events("{\"path\":\"index.html\",\"content\":\"incomplete", false),
+            anthropic_tool_events(
+                r#"{"path":"index.html","content":"complete","overwrite":true}"#,
+                true,
+            ),
+        ];
+        for events in cases {
+            let mut accumulator = anthropic_accumulator(events);
+            stop_anthropic(&mut accumulator, "max_tokens").unwrap();
+            let reply = accumulator.finish("anthropic_messages").unwrap();
+            assert!(reply.output_limited);
+            assert!(
+                reply.items.is_empty(),
+                "capped response content must not enter history"
+            );
+            assert!(
+                reply.calls().is_err(),
+                "capped response must never enter tool execution"
+            );
+            assert_eq!(reply.usage.input, 120);
+            assert_eq!(reply.usage.output, 8192);
+            assert_eq!(reply.usage.cache_read, 30);
+            assert_eq!(reply.usage.cache_create, 10);
+        }
+    }
+    #[test]
+    fn anthropic_output_limit_discards_completed_tools_before_truncated_tool() {
+        let mut events = anthropic_tool_events(
+            r#"{"path":"done.html","content":"done","overwrite":true}"#,
+            true,
+        );
+        events.extend([
+            json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"write-2","name":"write_file","input":{}}}),
+            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"next.html\",\"content\":\"cut off"}}),
+            json!({"type":"content_block_stop","index":1}),
+        ]);
+        let mut accumulator = anthropic_accumulator(events);
+        stop_anthropic(&mut accumulator, "max_tokens").unwrap();
+        let reply = accumulator.finish("anthropic_messages").unwrap();
+        assert!(reply.output_limited);
+        assert!(reply.items.is_empty());
+        assert!(reply.calls().is_err());
+    }
+    #[test]
+    fn anthropic_output_limit_requires_message_stop_not_just_stop_reason() {
+        let mut accumulator = anthropic_accumulator(anthropic_tool_events("{\"path\":", true));
+        accumulator.event("anthropic_messages", &json!({
+            "type":"message_delta", "delta":{"stop_reason":"max_tokens"}, "usage":{"output_tokens":8192}
+        })).unwrap();
+        let error = accumulator.finish("anthropic_messages").err().unwrap();
+        assert!(error.contains("连接在回合完成前断开"));
+    }
+    #[test]
+    fn anthropic_output_limit_does_not_relax_normal_tool_validation() {
+        for (arguments, closed) in [("{\"path\":", true), (r#"{"path":"index.html"}"#, false)] {
+            let mut accumulator = anthropic_accumulator(anthropic_tool_events(arguments, closed));
+            stop_anthropic(&mut accumulator, "tool_use").unwrap();
+            assert!(accumulator.finish("anthropic_messages").is_err());
+        }
+        let mut accumulator = anthropic_accumulator(anthropic_tool_events("[]", true));
+        stop_anthropic(&mut accumulator, "tool_use").unwrap();
+        let reply = accumulator.finish("anthropic_messages").unwrap();
+        assert!(!reply.output_limited);
+        assert!(reply.calls().is_err());
+        let mut accumulator = anthropic_accumulator(anthropic_tool_events(
+            r#"{"path":"index.html","content":"ok","overwrite":true}"#,
+            true,
+        ));
+        stop_anthropic(&mut accumulator, "tool_use").unwrap();
+        let reply = accumulator.finish("anthropic_messages").unwrap();
+        assert!(!reply.output_limited);
+        assert_eq!(reply.calls().unwrap()[0].arguments["path"], "index.html");
+        assert_eq!(reply.usage.output, 8192);
+    }
+    #[test]
+    fn anthropic_output_limit_does_not_recover_other_abnormal_stops() {
+        for reason in [
+            "refusal",
+            "model_context_window_exceeded",
+            "pause_turn",
+            "unknown",
+            "",
+        ] {
+            let mut accumulator = anthropic_accumulator(vec![]);
+            assert!(
+                stop_anthropic(&mut accumulator, reason).is_err(),
+                "{reason}"
+            );
+            assert!(accumulator.finish("anthropic_messages").is_err());
+        }
     }
     #[tokio::test]
     async fn responses_stream_tool_roundtrip_keeps_encrypted_reasoning() {
@@ -987,7 +1360,7 @@ mod tests {
             &client,
             &p,
             "mock-secret",
-            request_body(&p, "test-model", "system", &items, &[]).unwrap(),
+            request_body(&p, "gpt-6-sol", "api:high", "system", &items, &[]).unwrap(),
             |_| {},
         )
         .await
@@ -1005,7 +1378,7 @@ mod tests {
             &client,
             &p,
             "mock-secret",
-            request_body(&p, "test-model", "system", &items, &[]).unwrap(),
+            request_body(&p, "gpt-6-sol", "api:high", "system", &items, &[]).unwrap(),
             |s| text.push_str(s),
         )
         .await
@@ -1020,6 +1393,10 @@ mod tests {
         assert_eq!(requests[1].1["input"][1]["encrypted_content"], "opaque");
         assert_eq!(requests[1].1["input"][3]["type"], "function_call_output");
         assert_eq!(requests[0].1["store"], false);
+        for (_, body) in &requests {
+            assert_eq!(body["reasoning"]["effort"], "high");
+            assert_eq!(body["max_output_tokens"], p.max_output_tokens);
+        }
     }
     #[tokio::test]
     async fn anthropic_stream_preserves_thinking_signature_and_tools() {
@@ -1044,7 +1421,8 @@ mod tests {
             "secret",
             request_body(
                 &p,
-                "test-model",
+                "claude-sonnet-5-5",
+                "api:xhigh",
                 "s",
                 &[json!({"role":"user","content":"read"})],
                 &[],
@@ -1064,9 +1442,14 @@ mod tests {
             vec![("tool1".into(), "contents".into(), false)],
         )
         .unwrap();
-        let next = request_body(&p, "test-model", "s", &items, &[]).unwrap();
+        let next = request_body(&p, "claude-sonnet-5-5", "api:xhigh", "s", &items, &[]).unwrap();
         assert_eq!(next["messages"][1]["content"][0]["tool_use_id"], "tool1");
+        assert_eq!(next["output_config"]["effort"], "xhigh");
+        assert_eq!(next["thinking"]["type"], "adaptive");
         let requests = server.await.unwrap();
+        assert_eq!(requests[0].1["output_config"]["effort"], "xhigh");
+        assert_eq!(requests[0].1["thinking"]["type"], "adaptive");
+        assert_eq!(requests[0].1["max_tokens"], p.max_output_tokens);
         assert!(requests[0]
             .0
             .to_ascii_lowercase()

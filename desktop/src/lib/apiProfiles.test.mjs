@@ -1,9 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { apiEndpointChanged, apiProfileInput, normalizeApiEndpoint, parseApiModels, validateApiProfileInput } from './apiProfiles.ts';
+import { apiEndpointChanged, apiMaxOutputAfterProtocolChange, apiProfileInput, defaultApiMaxOutput, normalizeApiEndpoint, parseApiModels, validateApiProfileInput } from './apiProfiles.ts';
 
 const profile = { id: 'p1', name: 'Work', protocol: 'openai_responses', base_url: 'https://api.openai.com/v1', enabled: true, models: ['model-a'], default_model: 'model-a', max_output_tokens: 8192, key_configured: true };
+
+test('new untouched Claude drafts default to 32768; other protocols retain 8192 defaults', () => {
+  assert.equal(defaultApiMaxOutput('anthropic_messages'), 32768);
+  for (const protocol of ['openai_responses', 'openai_chat']) assert.equal(defaultApiMaxOutput(protocol), 8192);
+  const untouched = { existing: false, edited: false };
+  const claude = apiMaxOutputAfterProtocolChange('anthropic_messages', 8192, untouched);
+  assert.equal(claude, 32768);
+  assert.equal(apiMaxOutputAfterProtocolChange('openai_responses', claude, untouched), 8192);
+  assert.equal(apiMaxOutputAfterProtocolChange('openai_chat', claude, untouched), 8192);
+});
+
+test('protocol changes never overwrite saved limits or user-edited draft limits', () => {
+  for (const protocol of ['anthropic_messages', 'openai_responses', 'openai_chat']) {
+    for (const limit of [8192, 16384, 32768, 65536, 128000, 0]) {
+      assert.equal(apiMaxOutputAfterProtocolChange(protocol, limit, { existing: true, edited: false }), limit);
+      assert.equal(apiMaxOutputAfterProtocolChange(protocol, limit, { existing: false, edited: true }), limit);
+      assert.equal(apiMaxOutputAfterProtocolChange(protocol, limit, { existing: true, edited: true }), limit);
+    }
+  }
+});
 
 test('model IDs are trimmed, deduplicated and preserve ordered manual choices', () => {
   assert.deepEqual(parseApiModels(' model-a\nmodel-b,model-a， model-c\n'), ['model-a', 'model-b', 'model-c']);
@@ -45,4 +65,8 @@ test('settings keeps keys transient, deletes through confirmation, and labels re
   assert.match(source, /original\?\.key_configured && endpointChanged && !apiKey\.trim\(\)/);
   assert.match(source, /apiKey = ''/);
   assert.match(source, /apiKey: apiKey\.trim\(\) \|\| null/);
+  assert.match(source, /maxOutput = profile\?\.max_output_tokens \?\? defaultApiMaxOutput\(protocol\)/);
+  assert.match(source, /oninput=\{\(\) => maxOutputEdited = true\}/);
+  assert.match(source, /上限包含模型思考与工具调用参数/);
+  assert.match(source, /最多按原上限重试一次，不会自动提高上限/);
 });

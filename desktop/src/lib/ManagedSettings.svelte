@@ -1,11 +1,12 @@
 <script lang="ts">
   import ModelFx from './ModelFx.svelte';
+  import { effortAfterModelPick, type ModelOption } from './modelSelection';
   import Dropdown from './Dropdown.svelte';
   import { untrack } from 'svelte';
   import { settingLabels, validateManagedPatch, type ManagedSettingsPatch, type ManagedSettingsTarget, type SettingKey } from './managedSettings';
   let { targets, options, levels, busy = false, error = '', onsave, onclose }: {
     targets: ManagedSettingsTarget[];
-    options: {value:string;label:string;sub?:string;icon?:string;disabled?:boolean}[];
+    options: ModelOption[];
     levels: {value:string;label:string;sub?:string}[];
     busy?: boolean; error?: string;
     onsave: (patch: ManagedSettingsPatch) => void; onclose: () => void;
@@ -63,10 +64,10 @@
             <label class="field-label"><input type="checkbox" checked={selected.includes(key)} onchange={e => selected = e.currentTarget.checked ? [...selected,key] : selected.filter(k=>k!==key)} /><span>{settingLabels[key]}{#if mixed(key)}<small class="mixed">各站当前值不同</small>{/if}</span></label>
             <div class="control">
               {#if key === 'primary'}
-                <ModelFx {options} value={primary} {effort} onpick={(v:string)=>{primary=v;mark(key);}} oneffort={(v:string)=>{effort=v;mark(key);}} />
+                <ModelFx {options} value={primary} {effort} onpick={(v:string)=>{effort=effortAfterModelPick(primary,v,effort,options);primary=v;mark(key);}} oneffort={(v:string)=>{effort=v;mark(key);}} />
               {:else if key === 'fallback'}
                 <label class="fallback"><input type="checkbox" bind:checked={fallbackEnabled} onchange={()=>mark(key)} />启用备用模型</label>
-                {#if fallbackEnabled}<ModelFx {options} value={fallback} effort={fallbackEffort} onpick={(v:string)=>{fallback=v;mark(key);}} oneffort={(v:string)=>{fallbackEffort=v;mark(key);}} />{/if}
+                {#if fallbackEnabled}<ModelFx {options} value={fallback} effort={fallbackEffort} onpick={(v:string)=>{fallbackEffort=effortAfterModelPick(fallback,v,fallbackEffort,options);fallback=v;mark(key);}} oneffort={(v:string)=>{fallbackEffort=v;mark(key);}} />{/if}
               {:else if key === 'level'}
                 <Dropdown value={level} options={levels} onchange={v=>{level=v;mark(key);}} ariaLabel="托管级别" />
               {:else if key === 'weekly_post_limit'}

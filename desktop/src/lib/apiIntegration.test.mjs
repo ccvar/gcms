@@ -82,5 +82,6 @@ test('API selection remains shared by conversations, scheduled tasks and managed
   assert.match(page, /<ModelFx options=\{comboOpts\} value=\{`\$\{m\.brain\}::\$\{m\.model\}`\}/);
   const fx = fs.readFileSync(new URL('./ModelFx.svelte', import.meta.url), 'utf8');
   assert.match(fx, /const fastable = \$derived\(!value\.startsWith\('api:'\)/);
-  assert.match(fx, /\{#if !apiModel\}/);
+  assert.match(fx, /\{#if !apiModel \|\| apiLevels\.length\}/);
+  assert.match(fx, /apiReasoningLevels\(apiProtocol, model\)/);
 });

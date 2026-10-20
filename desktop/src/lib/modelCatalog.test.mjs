@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { apiEffortValue, apiReasoningLevels, normalizeApiEffort } from './apiReasoning.ts';
 
 const page=fs.readFileSync(new URL('../routes/+page.svelte',import.meta.url),'utf8');
 const fx=fs.readFileSync(new URL('./ModelFx.svelte',import.meta.url),'utf8');
@@ -35,7 +36,7 @@ test('GPT-6 Codex effort levels follow subscription capabilities, Luna excludes 
   for(const [model,expected] of [['gpt-6-sol',['','low','medium','high','xhigh','max','ultra']],
     ['gpt-6-luna',['','low','medium','high','xhigh','max']]]) {
     const stops=JSON.parse(evaluate(fx,'  type Stop =','  let open =','stops.map(s=>s.v)',
-      {value:'codex::'+model,$derived:v=>v}));
+      {value:'codex::'+model,options:[],apiReasoningLevels,$derived:v=>v}));
     assert.deepEqual(stops,expected);
   }
 });
@@ -48,7 +49,38 @@ test('Opus 5.5 fast mode is offered consistently by picker and launcher',()=>{
 });
 test('Luna displays max for a retained Sol ultra setting instead of falsely showing automatic',()=>{
   const state=JSON.parse(evaluate(fx,'  const effectiveEffort =','  /** 拖动中的',
-    '({effectiveEffort,idx})',{brain:'codex',model:'gpt-6-luna',effort:'ultra',
+    '({effectiveEffort,idx})',{brain:'codex',model:'gpt-6-luna',effort:'ultra',apiModel:false,
       stops:[{v:''},{v:'max'}],$derived:v=>v}));
   assert.deepEqual(state,{effectiveEffort:'max',idx:1});
+});
+test('API controls use protocol metadata rather than copying CLI effort tiers',()=>{
+  for(const model of ['claude-opus-5-5','claude-fable-5-1','claude-sonnet-5-5']) {
+    const value='api:claude-test::'+model;
+    const stops=JSON.parse(evaluate(fx,'  type Stop =','  let open =','stops.map(s=>({v:s.v,l:s.l}))',
+      {value,options:[{value,apiProtocol:'anthropic_messages'}],apiReasoningLevels,$derived:v=>v}));
+    assert.deepEqual(stops.map(s=>s.v),['','low','medium','high','xhigh','max']);
+    assert.equal(stops[0].l,'默认');
+    assert.equal(stops.at(-1).l,'最大');
+  }
+  for(const protocol of ['openai_chat','openai_responses']) {
+    const value='api:openai-test::gpt-6-sol';
+    const stops=JSON.parse(evaluate(fx,'  type Stop =','  let open =','stops.map(s=>s.v)',
+      {value,options:[{value,apiProtocol:protocol}],apiReasoningLevels,$derived:v=>v}));
+    assert.deepEqual(stops,['',...apiReasoningLevels(protocol,'gpt-6-sol')]);
+    assert.ok(!stops.includes('ultra'));
+  }
+  assert.match(page,/apiProtocol: apiProfile\(b\)\?\.protocol/);
+  assert.match(page,/apiProtocol: apiProfile\(cur\)\?\.protocol/);
+});
+test('invalid retained API effort displays a pending-adjustment state',()=>{
+  const state=JSON.parse(evaluate(fx,'  const effectiveEffort =','  /** 拖动中的',
+    '({effectiveEffort,unsupportedApiEffort,idx})',{apiModel:true,apiProtocol:'anthropic_messages',
+      model:'claude-sonnet-5-5',effort:'api:ultra',apiEffortValue,normalizeApiEffort,stops:[{v:''},{v:'high'}],$derived:v=>v}));
+  assert.deepEqual(state,{effectiveEffort:'',unsupportedApiEffort:true,idx:0});
+});
+
+test('managed confirmation displays effective API effort, never activates hidden legacy values',()=>{
+  const labels=JSON.parse(evaluate(page,'  function effortDisp(','  function mdTok(',
+    `[effortDisp('high','api:p'),effortDisp('','api:p'),effortDisp('api:high','api:p'),effortDisp('api:max','api:p'),effortDisp('high','claude')]`));
+  assert.deepEqual(labels,['默认','默认','高','最大','高']);
 });

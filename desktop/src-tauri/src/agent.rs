@@ -217,6 +217,11 @@ pub enum TurnEvent {
     Delta {
         text: String,
     },
+    /// Restore the cumulative text before a discarded API response. Previous
+    /// completed replies and tool activity are retained by the live UI.
+    TextReset {
+        text: String,
+    },
     Tool {
         label: String,
         detail: String,
@@ -2031,7 +2036,7 @@ pub async fn run_turn(
     // to Claude or silently change protocol/model after a failed API request.
     if let Some(profile_id) = brain.strip_prefix("api:") {
         return crate::api_agent::run_turn(
-            registry, conn, work_dir, profile_id.to_string(), model, mode,
+            registry, conn, work_dir, profile_id.to_string(), model, effort, mode,
             selected_skill_ids, data_dir, lease.as_ref(), session_ref, is_first,
             system, message, turn_id, channel, api_key,
         ).await;

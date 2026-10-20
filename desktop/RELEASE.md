@@ -7,6 +7,12 @@
 - **打包**：推 `pilot-v*` tag → `.github/workflows/pilot-release.yml` 分别构建 macOS arm64 和 Windows x64；macOS 产出 `.dmg` 与签名更新包，Windows 产出签名 NSIS 安装器。两个平台完成后合并 `latest.json`，发布到 `ccvar/gcms-pilot-releases`。
 - **升级**：app 里「连接与模型 → 关于 → 检查更新」调用 Tauri updater，拉 `.../releases/latest/download/latest.json`，比版本 → ed25519 验签 → 下载安装 → 重启。公钥已内置在 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
 
+## 0.2.61（2026-10-20）
+
+- API 模型支持按协议与模型选择思考等级；新对话、现有会话、定时任务及托管共用设置，旧的隐藏档位保持服务商默认，不自动启用。
+- Claude API 确认达到输出上限后，在原预算内恢复一次；撤回首次截断正文，不执行不完整工具调用，也不重复已完成的工具操作。网络异常等不确定结果不会自动重试。
+- 完整工具结果及时保存；符合完整性检查的旧会话可安全继续。新建 Claude API 服务默认输出上限调整为 32768，已有连接与手动设置不变。
+
 ## 一次性配置（只做一次）
 
 1. **建公开仓** `ccvar/gcms-pilot-releases`（空仓即可，跟 `gcms-releases` 分开，避免 updater 混淆）。

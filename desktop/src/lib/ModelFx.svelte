@@ -2,8 +2,10 @@
   // 模型 + 推理强度 合并面板：点开一个浮层，上半是模型列表、下半是可拖动的强度滑杆
   //（对标 ChatGPT/Claude 客户端的交互）。选择即回调，父组件负责真正落库/持久化。
   import BrainIcon from './BrainIcon.svelte';
+  import { apiEffortValue, apiReasoningLevels, normalizeApiEffort } from './apiReasoning';
+  import type { ModelOption } from './modelSelection';
 
-  type Opt = { value: string; label: string; sub?: string; icon?: string; disabled?: boolean };
+  type Opt = ModelOption;
   let {
     options = [] as Opt[],
     value = '',
@@ -62,12 +64,22 @@
   // Codex subscription-channel capabilities (models_cache), not Responses API tiers.
   const CODEX_LUNA_STOPS = CODEX_ASTRA_STOPS.filter((s) => s.v !== 'ultra');
   const brain = $derived(value.includes('::') ? value.slice(0, value.indexOf('::')) : '');
-  // API model IDs do not imply a shared reasoning schema. Keep vendor defaults
-  // until a profile declares a tested capability instead of sending CLI flags.
   const apiModel = $derived(brain.startsWith('api:'));
   const model = $derived(value.includes('::') ? value.slice(value.indexOf('::') + 2) : value);
-  const brainName = $derived(brain === 'claude' ? 'Claude' : brain === 'grok' ? 'Grok' : brain === 'codex' ? 'Codex' : '模型');
-  const stops = $derived(brain === 'claude' ? CLAUDE_STOPS : brain === 'grok' ? GROK_STOPS
+  const current = $derived(options.find((o) => o.value === value));
+  const apiProtocol = $derived(current?.apiProtocol);
+  const apiLevels = $derived(apiReasoningLevels(apiProtocol, model));
+  const limitedChatReasoning = $derived(apiModel && apiProtocol === 'openai_chat'
+    && apiReasoningLevels('openai_responses', model).length > apiLevels.length);
+  const apiStops = $derived<Stop[]>([
+    { v: '', l: '默认', d: '跟随服务商默认' },
+    ...apiLevels.map(v => v === 'max'
+      ? { v, l: '最大', d: '最大推理' }
+      : GROK_STOPS.find(stop => stop.v === v) ?? { v, l: v, d: '' }),
+  ]);
+  const brainName = $derived(apiModel ? (apiProtocol === 'anthropic_messages' ? 'Claude API' : 'API')
+    : brain === 'claude' ? 'Claude' : brain === 'grok' ? 'Grok' : brain === 'codex' ? 'Codex' : '模型');
+  const stops = $derived(apiModel ? apiStops : brain === 'claude' ? CLAUDE_STOPS : brain === 'grok' ? GROK_STOPS
     : brain === 'codex' && (model === 'gpt-6-astra' || model === 'gpt-6-sol') ? CODEX_ASTRA_STOPS
     : brain === 'codex' && model === 'gpt-6-luna' ? CODEX_LUNA_STOPS : BASE_STOPS);
 
@@ -77,13 +89,14 @@
   let dragging = $state(false);
   let menuStyle = $state('');
 
-  const current = $derived(options.find((o) => o.value === value));
   // Match the backend's cap when a Sol/Astra conversation switches to Luna.
-  const effectiveEffort = $derived(brain === 'codex' && model === 'gpt-6-luna' && effort === 'ultra' ? 'max' : effort);
+  const effectiveEffort = $derived(apiModel ? apiEffortValue(normalizeApiEffort(apiProtocol, model, effort))
+    : brain === 'codex' && model === 'gpt-6-luna' && effort === 'ultra' ? 'max' : effort);
+  const unsupportedApiEffort = $derived(apiModel && effort.startsWith('api:') && !effectiveEffort);
   const idx = $derived(Math.max(0, stops.findIndex((s) => s.v === effectiveEffort)));
   /** 拖动中的原始位置（0-100）；null＝未在拖，显示已选档位 */
   let dragPct = $state<number | null>(null);
-  const pct = $derived(dragPct ?? (idx / (stops.length - 1)) * 100);
+  const pct = $derived(dragPct ?? (stops.length > 1 ? (idx / (stops.length - 1)) * 100 : 0));
   /** 面板标题实时预览：拖到哪就显示哪个档（松手才真正提交） */
   const liveIdx = $derived(dragPct === null ? idx : Math.round((dragPct / 100) * (stops.length - 1)));
 
@@ -112,7 +125,8 @@
     if (o.value !== value) onpick(o.value);
   }
   function setIdx(i: number) {
-    const v = stops[Math.max(0, Math.min(stops.length - 1, i))].v;
+    const selected = stops[Math.max(0, Math.min(stops.length - 1, i))].v;
+    const v = apiModel && selected ? `api:${selected}` : selected;
     if (v !== effort) oneffort(v);
   }
   // 拖动：pointer capture，拖动中 1:1 跟手（不吸附），松手才落到最近档（带缓动）。
@@ -161,7 +175,7 @@
   <button type="button" class="fx-trigger" class:open onclick={toggle}>
     {#if current?.icon}<BrainIcon brain={current.icon} size={13} />{/if}
     <span class="fx-label">{current?.label ?? (value || '模型')}</span>
-    {#if apiModel}<span class="fx-eff">API</span>{:else if idx > 0}<span class="fx-eff">{stops[idx].l}</span>{/if}
+    {#if apiModel}<span class="fx-eff">API · {unsupportedApiEffort ? '待调整' : stops[idx].l}</span>{:else if idx > 0}<span class="fx-eff">{stops[idx].l}</span>{/if}
     <svg class="fx-chev" width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
   </button>
   {#if open}
@@ -176,9 +190,9 @@
           </button>
         {/each}
       </div>
-      {#if !apiModel}
+      {#if !apiModel || apiLevels.length}
       <div class="fx-div"></div>
-      <div class="fx-sec">推理强度<span class="fx-sec-sub">{stops[liveIdx].l} · {brainName} {stops[liveIdx].v || 'auto'}{stops[liveIdx].d ? ' · ' + stops[liveIdx].d : ''}</span></div>
+      <div class="fx-sec">推理强度<span class="fx-sec-sub">{stops[liveIdx].l} · {brainName} {stops[liveIdx].v || (apiModel ? 'default' : 'auto')}{stops[liveIdx].d ? ' · ' + stops[liveIdx].d : ''}</span></div>
       <div class="fx-ends"><span>更快</span><span>更缜密</span></div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="fx-slider" class:drag={dragging} class:max={pct >= 99.5} style="--p:{pct}" bind:this={track} onpointerdown={onDown} onpointermove={onMove} onpointerup={onUp} onpointercancel={onUp}>
@@ -194,12 +208,17 @@
       </div>
       <div class="fx-stop-labels" style={`--stop-count:${stops.length}`}>
         {#each stops as st, i (st.v)}
-          <button type="button" class:on={i === liveIdx} title={`${brainName} ${st.v || 'auto'}：${st.d}`} onclick={() => setIdx(i)}>{st.l}</button>
+          <button type="button" class:on={i === liveIdx} aria-pressed={i === liveIdx} title={`${brainName} ${st.v || (apiModel ? 'default' : 'auto')}：${st.d}`} onclick={() => setIdx(i)}>{st.l}</button>
         {/each}
       </div>
+      {#if apiModel}<div class="fx-api-note">推理档位按模型支持显示 · 用量由服务商独立计费</div>{/if}
       {:else}
         <div class="fx-div"></div>
-        <div class="fx-api-note">使用 API 模型默认推理配置 · 用量由服务商独立计费</div>
+        <div class="fx-api-note">{limitedChatReasoning ? '此模型的工具调用需使用 OpenAI Responses 接口。' : '此模型暂未确认可用推理档位，使用服务商默认配置。'}用量由服务商独立计费</div>
+      {/if}
+      {#if limitedChatReasoning && apiLevels.length}<div class="fx-api-note">此模型在兼容接口中使用工具仅支持「无」推理；如需思考等级，请使用 OpenAI Responses 接口。</div>{/if}
+      {#if unsupportedApiEffort}
+        <div class="fx-api-note fx-api-warning" role="status">已保存的「{apiEffortValue(effort)}」不受此模型支持，请选择可用档位或<button type="button" onclick={() => oneffort('')}>恢复默认</button>。</div>
       {/if}
       {#if fastable}
         <div class="fx-div"></div>
@@ -215,6 +234,8 @@
 <style>
   .fx { position: relative; display: inline-flex; }
   .fx-api-note { flex: none; padding: 3px 8px 5px; font-size: 11px; line-height: 1.5; color: var(--dim, #6b675f); }
+  .fx-api-warning { color: var(--warn, #a9651d); }
+  .fx-api-warning button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
   .fx-fast { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; }
   .fx-fast:hover:not(:disabled) { background: #f1efe9; }
   .fx-fast:disabled { cursor: default; }

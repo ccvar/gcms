@@ -584,6 +584,8 @@ export interface Conversation {
 
 export type TurnEvent =
   | { type: 'delta'; text: string }
+  /** Replace only the current turn's streamed text with a safe response checkpoint. */
+  | { type: 'text_reset'; text: string }
   | { type: 'tool'; label: string; detail: string }
   | {
       type: 'activity';

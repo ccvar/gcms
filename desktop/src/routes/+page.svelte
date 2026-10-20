@@ -23,6 +23,7 @@
   import SiteFav from '$lib/SiteFav.svelte';
   import SkillFav from '$lib/SkillFav.svelte';
   import ModelFx from '$lib/ModelFx.svelte';
+  import { effortAfterModelPick, type ModelOption } from '$lib/modelSelection';
   import ManagedSettings from '$lib/ManagedSettings.svelte';
   import ManagedSitePicker from '$lib/ManagedSitePicker.svelte';
   import ManagedCardMenu from '$lib/ManagedCardMenu.svelte';
@@ -4817,19 +4818,19 @@
   function conversationModelOptions(c:Conversation|null) {
     const cur = (c?.brain ?? 'claude') as Brain;
     const order: Brain[] = [cur, ...ALL_BRAINS.filter((b) => b !== cur)];
-    const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
+    const out: ModelOption[] = [];
     for (const b of order) {
       // 当前厂商永远可选（会话已经在用它了，灰掉只会让触发器显示成一个选不中的项）。
       // 远程连接下的 codex 不置灰、只挂注记：它能用，只是那道闸是打折的（完整说法见 permTipFor）。
       const usable = b.startsWith('api:') ? brainUsable(b) : b === cur || brainUsable(b);
       const note = isCodexSsh(b, conversationConnection(c)?.kind==='ssh') ? CODEX_SSH_NOTE : brainAvailability(b);
       for (const m of launcherModelOpts(b)) {
-        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: modelIcon(b), disabled: !usable });
+        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: modelIcon(b), disabled: !usable, apiProtocol: apiProfile(b)?.protocol });
       }
     }
     // 会话当前模型不在清单里（比如自定义 ID 事后被删）：补一条，触发器别显示成裸编码值。
     const curVal = `${cur}::${c?.model}`;
-    if (!out.some((o) => o.value === curVal)) out.unshift({ value: curVal, label: c?.model || '模型', sub: brainAvailability(cur) || '当前会话', icon: modelIcon(cur), disabled: cur.startsWith('api:') && !brainUsable(cur) });
+    if (!out.some((o) => o.value === curVal)) out.unshift({ value: curVal, label: c?.model || '模型', sub: brainAvailability(cur) || '当前会话', icon: modelIcon(cur), disabled: cur.startsWith('api:') && !brainUsable(cur), apiProtocol: apiProfile(cur)?.protocol });
     return out;
   }
   const threadComboOpts = $derived(conversationModelOptions(activeConv));
@@ -5070,7 +5071,7 @@
       const label=settingLabels[key as keyof ManagedSettingsPatch];
       if (key==='primary' || key==='fallback') {
         const m=value as {brain:string;model:string;effort:string};
-        return `${label}：${m.brain ? `${modelDisp(m.brain,m.model)} · ${effortDisp(m.effort)}` : '停用'}`;
+        return `${label}：${m.brain ? `${modelDisp(m.brain,m.model)} · ${effortDisp(m.effort, m.brain)}` : '停用'}`;
       }
       return `${label}：${key==='level'?levelLabel(String(value)):key==='token_weekly_budget'&&value===0?'不限':value}`;
     });
@@ -5246,8 +5247,10 @@
 ③ 建议先在 L1/L2 稳定运行满 2 周、打回率低后再升 L3。
 改动均会留修订历史；每周查看周报的「观察名单」跟踪数据回落。`;
   function modelDisp(brain: string, model: string): string { return launcherModelOpts(brain).find((o) => o.value === model)?.label ?? (model || '默认'); }
-  function effortDisp(e: string): string {
-    return e === 'none' ? '无' : e === 'minimal' ? '极低' : e === 'low' ? '低' : e === 'medium' ? '中' : e === 'high' ? '高' : e === 'xhigh' ? '极高' : e === 'max' ? '最高' : e === 'ultra' ? '极致' : '';
+  function effortDisp(e: string, brain = ''): string {
+    if (brain.startsWith('api:') && !e.startsWith('api:')) return '默认';
+    if (e.startsWith('api:')) e = e.slice(4);
+    return e === 'none' ? '无' : e === 'minimal' ? '极低' : e === 'low' ? '低' : e === 'medium' ? '中' : e === 'high' ? '高' : e === 'xhigh' ? '极高' : e === 'max' ? (brain.startsWith('api:') ? '最大' : '最高') : e === 'ultra' ? '极致' : '默认';
   }
   function mdTok(n: number): string { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
   async function changeManagedModels(m: ManagedSite, value?: string, effort?: string) {
@@ -5257,7 +5260,7 @@
       const i = value.indexOf('::');
       if (i > 0) { brain = value.slice(0, i); model = value.slice(i + 2); }
     }
-    const nextEffort = effort ?? m.effort ?? '';
+    const nextEffort = effort ?? (value ? effortAfterModelPick(`${m.brain}::${m.model}`, value, m.effort ?? '', comboOpts) : m.effort ?? '');
     if (!brainUsable(brain as Brain)) { say('所选厂商未就绪，无法修改托管模型', 'err'); return; }
     try {
       await invoke('managed_set_models', {
@@ -6515,12 +6518,12 @@
   // 启动页「厂商+模型」合并为一个下拉：行带厂商图标，值编码为 "<brain>::<model>"。
   // 厂商未就绪时整组置灰（原厂商下拉的禁用语义保留）。
   const comboOpts = $derived.by(() => {
-    const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
+    const out: ModelOption[] = [];
     for (const b of ALL_BRAINS) {
       const usable = brainUsable(b);
       const note = isCodexSsh(b, isSshConn) ? CODEX_SSH_NOTE : brainAvailability(b);
       for (const m of launcherModelOpts(b)) {
-        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: modelIcon(b), disabled: !usable });
+        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: modelIcon(b), disabled: !usable, apiProtocol: apiProfile(b)?.protocol });
       }
     }
     return out;
@@ -6536,9 +6539,18 @@
   function pickCombo(v: string) {
     const i = v.indexOf('::');
     if (i < 0) return;
+    lEffort = effortAfterModelPick(`${lBrain}::${lModel}`, v, lEffort, comboOpts);
     lBrain = v.slice(0, i) as Brain;
     lModel = v.slice(i + 2);
-    if (lBrain.startsWith('api:')) { lEffort = ''; lFast = false; }
+    if (lBrain.startsWith('api:')) lFast = false;
+    persistLauncherEffort(lEffort);
+  }
+  function persistLauncherEffort(v: string) {
+    lEffort = v;
+    // Keep the model identity and its protocol-specific effort in one snapshot,
+    // even before a first message is sent or the managed wizard is opened.
+    prefs.brain = lBrain; prefs.model = lModel; prefs.effort = lEffort; prefs.fast = lFast;
+    savePrefs(prefs);
   }
 
   // 权限档位按风险给下拉文字上色：自动=警告色、全自动(全程不拦)=危险色，计划/询问保持中性。
@@ -12022,8 +12034,9 @@
     ch.onmessage = (ev) => {
       const buf = lives[convId];
       if (!buf) return; // 该对话已结束/被清（切走后仍可能收到尾包）
-      if (ev.type === 'delta') {
-        buf.text += ev.text;
+      if (ev.type === 'delta' || ev.type === 'text_reset') {
+        // 恢复一次被截断的响应时，只撤回该响应的文字；此前的正文、工具和活动保留。
+        buf.text = ev.type === 'text_reset' ? ev.text : buf.text + ev.text;
         // Markdown 的 {@html} 会替换其整棵子树。若直接在模板中调用 mdRender，
         // 生图/推理等 activity 更新也可能让正文跟着反复失效，形成可见闪空。
         // 把渲染结果缓存到正文事件上，任务卡更新时该字段保持引用和值都不变。
@@ -13634,7 +13647,7 @@
                 </div>
                 <div class="cb-right">
                   <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, false)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, false)} />
-                  <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} onfast={setFast} />
+                  <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={persistLauncherEffort} onfast={setFast} />
                   <button class="send" type="button" onclick={startSkillChat} disabled={!selectedLaunchSkill || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
                 </div>
               </div>
@@ -13787,7 +13800,7 @@
                 </div>
                 <div class="cb-right">
                   <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, isSshConn)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, isSshConn)} />
-                  <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} onfast={setFast} />
+                  <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={persistLauncherEffort} onfast={setFast} />
                   <UsageRing />
                   <button class="send" onclick={startChat} disabled={(!isSshConn && !isGcmsSiteBuild && !isWorkspaceChat && !lSite.trim() && lSites.length < 2) || (isGcmsSiteBuild ? !siteBuildChatReady : !lDraft.trim()) || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
                 </div>
@@ -13917,7 +13930,7 @@
                     </span>
                     <div>
                       <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, false)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, false)} />
-                      <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} onfast={setFast} />
+                      <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={persistLauncherEffort} onfast={setFast} />
                       <UsageRing />
                     </div>
                   </div>
@@ -14960,7 +14973,7 @@
                       <div class="cb-left"><span class="ssh-target" title={activeConn?.ssh_os || '远端系统未知'}>{@render distroMark(distroOf(activeConn), 13)}{activeConn?.ssh_user}@{activeConn?.ssh_host}</span></div>
                       <div class="cb-right">
                         <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, true)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, true)} />
-                        <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} onfast={setFast} />
+                        <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={persistLauncherEffort} onfast={setFast} />
                         <button class="send" onclick={startChat} disabled={(!lDraft.trim() && !attachments.length) || attaching || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
                       </div>
                     </div>
@@ -19203,7 +19216,7 @@
       <div class="md-model-grid task-model-grid">
         <div class="tfield md-model-card md-model-primary">
           <div class="md-model-head"><strong>主模型</strong><small>与对话中的模型选择一致</small></div>
-          <div class="tfield-fx"><ModelFx options={comboOpts} value={`${tf.brain}::${tf.model}`} effort={tf.effort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { tf.brain = v.slice(0, i); tf.model = v.slice(i + 2); } }} oneffort={(v: string) => (tf.effort = v)} /></div>
+          <div class="tfield-fx"><ModelFx options={comboOpts} value={`${tf.brain}::${tf.model}`} effort={tf.effort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { tf.effort = effortAfterModelPick(`${tf.brain}::${tf.model}`, v, tf.effort, comboOpts); tf.brain = v.slice(0, i); tf.model = v.slice(i + 2); } }} oneffort={(v: string) => (tf.effort = v)} /></div>
         </div>
         <div class="tfield md-model-card md-model-fallback">
           <div class="md-model-head md-model-head-fallback">
@@ -19211,7 +19224,7 @@
             <button type="button" class="md-fallback-switch" class:active={tf.fallbackEnabled} role="switch" aria-checked={tf.fallbackEnabled} aria-label={tf.fallbackEnabled ? '停用备用模型' : '启用备用模型'} onclick={() => (tf.fallbackEnabled = !tf.fallbackEnabled)}><span></span></button>
           </div>
           {#if tf.fallbackEnabled}
-            <div class="tfield-fx"><ModelFx options={comboOpts} value={`${tf.fallbackBrain}::${tf.fallbackModel}`} effort={tf.fallbackEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { tf.fallbackBrain = v.slice(0, i); tf.fallbackModel = v.slice(i + 2); } }} oneffort={(v: string) => (tf.fallbackEffort = v)} /></div>
+            <div class="tfield-fx"><ModelFx options={comboOpts} value={`${tf.fallbackBrain}::${tf.fallbackModel}`} effort={tf.fallbackEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { tf.fallbackEffort = effortAfterModelPick(`${tf.fallbackBrain}::${tf.fallbackModel}`, v, tf.fallbackEffort, comboOpts); tf.fallbackBrain = v.slice(0, i); tf.fallbackModel = v.slice(i + 2); } }} oneffort={(v: string) => (tf.fallbackEffort = v)} /></div>
             <small class="md-fallback-note">仅限额度、限流或模型不可用，且尚未执行写操作；不会重复运行。</small>
           {:else}
             <button type="button" class="md-fallback-empty" onclick={() => (tf.fallbackEnabled = true)}>
@@ -19365,7 +19378,7 @@
               <strong>主模型</strong>
               <small>三个配套任务共用，与对话选择器一致</small>
             </div>
-            <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div>
+            <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwEffort = effortAfterModelPick(`${mwBrain}::${mwModel}`, v, mwEffort, comboOpts); mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div>
           </div>
           <div class="tfield md-model-card md-model-fallback">
             <div class="md-model-head md-model-head-fallback">
@@ -19384,7 +19397,7 @@
               ><span></span></button>
             </div>
             {#if mwFallbackEnabled}
-              <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwFallbackBrain}::${mwFallbackModel}`} effort={mwFallbackEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwFallbackBrain = v.slice(0, i); mwFallbackModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwFallbackEffort = v)} /></div>
+              <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwFallbackBrain}::${mwFallbackModel}`} effort={mwFallbackEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwFallbackEffort = effortAfterModelPick(`${mwFallbackBrain}::${mwFallbackModel}`, v, mwFallbackEffort, comboOpts); mwFallbackBrain = v.slice(0, i); mwFallbackModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwFallbackEffort = v)} /></div>
               <small class="md-fallback-note">仅在额度、限流或模型不可用，且尚未执行写操作时切换；不会反复重试。</small>
             {:else}
               <button type="button" class="md-fallback-empty" onclick={() => (mwFallbackEnabled = true)}>
@@ -19561,7 +19574,7 @@
           <div class="md-model-grid">
             <div class="tfield md-model-card md-model-primary">
               <div class="md-model-head"><strong>主模型</strong><small>扫描、执行和周报共用</small></div>
-              <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div>
+              <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwEffort = effortAfterModelPick(`${mwBrain}::${mwModel}`, v, mwEffort, comboOpts); mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div>
             </div>
             <div class="tfield md-model-card md-model-fallback">
               <div class="md-model-head md-model-head-fallback">
@@ -19569,7 +19582,7 @@
                 <button type="button" class="md-fallback-switch" class:active={mwFallbackEnabled} role="switch" aria-checked={mwFallbackEnabled} aria-label={mwFallbackEnabled ? '停用备用模型' : '启用备用模型'} onclick={() => (mwFallbackEnabled = !mwFallbackEnabled)}><span></span></button>
               </div>
               {#if mwFallbackEnabled}
-                <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwFallbackBrain}::${mwFallbackModel}`} effort={mwFallbackEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwFallbackBrain = v.slice(0, i); mwFallbackModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwFallbackEffort = v)} /></div>
+                <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwFallbackBrain}::${mwFallbackModel}`} effort={mwFallbackEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwFallbackEffort = effortAfterModelPick(`${mwFallbackBrain}::${mwFallbackModel}`, v, mwFallbackEffort, comboOpts); mwFallbackBrain = v.slice(0, i); mwFallbackModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwFallbackEffort = v)} /></div>
               {:else}
                 <button type="button" class="md-fallback-empty" onclick={() => (mwFallbackEnabled = true)}><span>＋ 添加备用模型</span></button>
               {/if}

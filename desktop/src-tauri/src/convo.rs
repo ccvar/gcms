@@ -273,6 +273,29 @@ impl ConvStore {
         Ok(Some(updated))
     }
 
+    /// Validate and change related fields under one lock. Failed validation must
+    /// not persist any partial changes (for example model without its effort).
+    pub fn mutate_checked<F>(
+        &self,
+        id: &str,
+        now: u64,
+        f: F,
+    ) -> Result<Option<Conversation>, String>
+    where
+        F: FnOnce(&mut Conversation) -> Result<(), String>,
+    {
+        let _g = self.lock.lock().unwrap();
+        let mut list = self.read();
+        let Some(slot) = list.iter_mut().find(|c| c.id == id) else {
+            return Ok(None);
+        };
+        f(slot)?;
+        slot.updated_at = now;
+        let updated = slot.clone();
+        self.save(&list)?;
+        Ok(Some(updated))
+    }
+
     pub fn remove(&self, id: &str) -> Result<(), String> {
         let _g = self.lock.lock().unwrap();
         let mut list = self.read();
@@ -421,6 +444,38 @@ mod tests {
     }
 
     #[test]
+    fn checked_mutation_saves_model_and_effort_together_and_rolls_back_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConvStore::new(dir.path());
+        let mut c = conv("checked", "session", vec![]);
+        c.brain = "api:profile".into();
+        c.model = "claude-sonnet-5-5".into();
+        c.effort = "api:xhigh".into();
+        store.upsert(c).unwrap();
+        let rejected = store.mutate_checked("checked", 5, |c| {
+            c.model = "invalid-model".into();
+            c.effort.clear();
+            Err("invalid selection".into())
+        });
+        assert!(rejected.is_err());
+        let unchanged = store.get("checked").unwrap();
+        assert_eq!(unchanged.model, "claude-sonnet-5-5");
+        assert_eq!(unchanged.effort, "api:xhigh");
+        let updated = store
+            .mutate_checked("checked", 10, |c| {
+                c.model = "claude-opus-4-6".into();
+                c.effort.clear();
+                Ok(())
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.model, "claude-opus-4-6");
+        assert_eq!(updated.effort, "");
+        assert_eq!(updated.updated_at, 10);
+        assert_eq!(store.get("checked").unwrap().effort, "");
+    }
+
+    #[test]
     fn legacy_workspace_is_anchored_once_and_stops_roaming() {
         let base = std::env::temp_dir().join(format!("convo-anchor-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
@@ -499,7 +554,11 @@ mod tests {
         std::fs::create_dir_all(&base).unwrap();
         let store = ConvStore::new(&base);
         store
-            .upsert(conv("a", "", vec![msg("user", "hi"), msg("assistant", "早年回复")]))
+            .upsert(conv(
+                "a",
+                "",
+                vec![msg("user", "hi"), msg("assistant", "早年回复")],
+            ))
             .unwrap();
 
         let started = store.begin_turn("a", 10, msg("user", "新消息"));
@@ -510,7 +569,10 @@ mod tests {
 
         // 有 session 的照旧走 Started
         store.upsert(conv("b", "sess-1", vec![])).unwrap();
-        assert!(matches!(store.begin_turn("b", 11, msg("user", "q")), TurnStart::Started));
+        assert!(matches!(
+            store.begin_turn("b", 11, msg("user", "q")),
+            TurnStart::Started
+        ));
         std::fs::remove_dir_all(&base).ok();
     }
 

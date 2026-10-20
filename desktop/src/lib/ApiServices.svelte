@@ -6,7 +6,7 @@
   import ConfirmDialog from './ConfirmDialog.svelte';
   import ApiServiceMenu from './ApiServiceMenu.svelte';
   import ApiBilling from './ApiBilling.svelte';
-  import { API_PROTOCOL_OPTIONS, apiEndpointChanged, apiEndpointHost, apiProfileInput, apiProtocolLabel, normalizeApiEndpoint, parseApiModels, validateApiProfileInput, type ApiProfile, type ApiProfileInput, type ApiProtocol, type ApiTestResult } from './apiProfiles';
+  import { API_PROTOCOL_OPTIONS, apiEndpointChanged, apiEndpointHost, apiMaxOutputAfterProtocolChange, apiProfileInput, apiProtocolLabel, defaultApiMaxOutput, normalizeApiEndpoint, parseApiModels, validateApiProfileInput, type ApiProfile, type ApiProfileInput, type ApiProtocol, type ApiTestResult } from './apiProfiles';
 
   let { profiles, onchange }: { profiles: ApiProfile[]; onchange: (profiles: ApiProfile[]) => void } = $props();
 
@@ -18,7 +18,8 @@
   let apiKey = $state('');
   let modelText = $state('');
   let defaultModel = $state('');
-  let maxOutput = $state(8192);
+  let maxOutput = $state(defaultApiMaxOutput('openai_responses'));
+  let maxOutputEdited = $state(false);
   let advanced = $state(false);
   let busy = $state('');
   let busyLabel = $state('');
@@ -49,7 +50,8 @@
     apiKey = '';
     modelText = profile?.models.join('\n') ?? '';
     defaultModel = profile?.default_model ?? '';
-    maxOutput = profile?.max_output_tokens ?? 8192;
+    maxOutput = profile?.max_output_tokens ?? defaultApiMaxOutput(protocol);
+    maxOutputEdited = false;
     advanced = !!profile && baseUrl !== API_PROTOCOL_OPTIONS.find(option => option.value === protocol)?.baseUrl;
     editorError = ''; editorNotice = ''; suggestions = []; modelQuery = '';
     await tick();
@@ -66,6 +68,7 @@
     const next = API_PROTOCOL_OPTIONS.find(option => option.value === value);
     if (!next) return;
     if (!name.trim() || name === previous?.name) name = next.name;
+    maxOutput = apiMaxOutputAfterProtocolChange(next.value, maxOutput, { existing: !!original, edited: maxOutputEdited });
     protocol = next.value;
     baseUrl = next.baseUrl;
     advanced = !next.baseUrl;
@@ -219,7 +222,7 @@
       {#if models.length}<div class="field full"><span>默认模型</span><Dropdown value={models.includes(defaultModel) ? defaultModel : models[0]} options={models.map(model => ({ value: model, label: model }))} ariaLabel="API 默认模型" disabled={!!busy} onchange={value => defaultModel = value} /></div>{/if}
     </div>
     <button type="button" class="advanced-toggle" aria-expanded={advanced} disabled={!!busy} onclick={() => advanced = !advanced}><svg class:open={advanced} viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m4.5 3 3 3-3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>高级设置<span>{advanced ? '' : '接口地址 · 输出上限'}</span></button>
-    {#if advanced}<div class="fields advanced"><label class="field full"><span>API 基础地址</span><input bind:value={baseUrl} type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" disabled={!!busy} /><small>填写基础地址，不包含 /responses、/messages 或 /chat/completions。</small></label><label class="field"><span>单次最大输出 token</span><input type="number" bind:value={maxOutput} min="1" max="1000000" step="1" disabled={!!busy} /></label></div>{/if}
+    {#if advanced}<div class="fields advanced"><label class="field full"><span>API 基础地址</span><input bind:value={baseUrl} type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" disabled={!!busy} /><small>填写基础地址，不包含 /responses、/messages 或 /chat/completions。</small></label><label class="field"><span>单次最大输出 token</span><input type="number" bind:value={maxOutput} oninput={() => maxOutputEdited = true} aria-describedby="api-max-output-help" min="1" max="1000000" step="1" disabled={!!busy} /></label><p id="api-max-output-help" class="inline-note full">上限包含模型思考与工具调用参数；长代码任务可在模型支持时设为 32768。{#if protocol === 'anthropic_messages'}Claude 达到上限时，当前响应最多按原上限重试一次，不会自动提高上限。{/if}</p></div>{/if}
     {#if editorNotice}<p class="message" role="status">{editorNotice}</p>{/if}
     {#if editorError}<p class="message error" role="alert">{editorError}</p>{/if}
     <div class="editor-footer"><span>仅配置支持工具调用的对话模型。</span><div><button type="button" class="button" onclick={closeEditor} disabled={!!busy}>取消</button><button type="submit" class="button primary" disabled={!!busy}>{busy ? busyLabel : '保存'}</button></div></div>

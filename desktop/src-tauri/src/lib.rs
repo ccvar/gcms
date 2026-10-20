@@ -3,6 +3,7 @@ mod agent;
 mod api_agent;
 mod api_billing;
 mod api_profiles;
+mod api_reasoning;
 mod editorial;
 mod brains;
 mod bridge;
@@ -3060,6 +3061,27 @@ mod workdir_tests {
         .expect("test conversation")
     }
 
+    #[test]
+    fn api_effort_switch_resolves_profile_default_without_reading_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "11111111-1111-4111-8111-111111111111";
+        let brain = format!("api:{id}");
+        let profile = api_profiles::ApiProfile {
+            id: id.into(), name: "test".into(), protocol: "anthropic_messages".into(),
+            base_url: "https://api.anthropic.com/v1".into(), enabled: true,
+            models: vec!["claude-sonnet-5-5".into(), "claude-opus-4-6".into()],
+            default_model: "claude-sonnet-5-5".into(), max_output_tokens: 8192,
+        };
+        std::fs::write(dir.path().join("model-api-profiles.json"), serde_json::to_vec(&vec![profile]).unwrap()).unwrap();
+        let mut c = test_conv(&brain, "", "full");
+        c.effort = "api:xhigh".into();
+        assert_eq!(conversation_effort_after_switch(dir.path(), &c, &brain, "").unwrap(), "api:xhigh");
+        assert_eq!(conversation_effort_after_switch(dir.path(), &c, &brain, "claude-opus-4-6").unwrap(), "");
+        assert_eq!(conversation_effort_after_switch(dir.path(), &c, "claude", "sonnet").unwrap(), "");
+        c.effort = "high".into();
+        assert_eq!(conversation_effort_after_switch(dir.path(), &c, &brain, "").unwrap(), "", "hidden legacy API effort must not become active");
+    }
+
     /// ★ 放开 codex 跑远程连接之后，**AI 桥那道确认卡是它仅剩的闸**（闸在 bridge.rs，与厂商无关）。
     /// 所以「codex 的 ask/auto 落 full」这条规则**绝不能**落到 ssh 对话上：
     /// 前端切完厂商会立刻 rebuild_session 自动重跑，静默升档 = 一次「换个模型」的点击
@@ -4695,15 +4717,15 @@ fn set_conversation_model(
     conv_id: String,
     model: String,
 ) -> Result<Option<Conversation>, String> {
-    if let Some(c) = state.convos.get(&conv_id) {
+    state.convos.mutate_checked(&conv_id, now_secs(), |c| {
         if c.brain.starts_with("api:") && c.status == "running" {
             return Err("上一轮还在进行中，请稍候再切换 API 模型".into());
         }
         validate_executor(&state.data_dir, &c.brain, &model)?;
-    }
-    state.convos.mutate(&conv_id, now_secs(), move |c| {
+        let effort = conversation_effort_after_switch(&state.data_dir, c, &c.brain, &model)?;
         let changed = c.model != model;
         c.model = model;
+        c.effort = effort;
         // ★ claude 的 `--resume` 无视 `--model`（2.1.96 实测：resume 换档后自报仍是旧模型）——
         // 「同厂商换档下一轮生效」对 claude 是空头支票。换模型就清 session_ref，
         // 下一条消息走 StartedFresh 重建路（新 session + 历史摘要），模型才真正切换。
@@ -4711,13 +4733,50 @@ fn set_conversation_model(
         if changed && (c.brain == "claude" || c.brain.starts_with("api:")) {
             c.session_ref = String::new();
         }
+        Ok(())
     })
+}
+
+fn api_profile_for_brain(data_dir: &std::path::Path, brain: &str) -> Result<Option<api_profiles::ApiProfile>, String> {
+    let Some(id) = brain.strip_prefix("api:") else {
+        return Ok(None);
+    };
+    let (_lock, profile) = api_profiles::locked_profile(data_dir, id)?;
+    Ok(Some(profile))
+}
+
+fn conversation_effort_after_switch(
+    data_dir: &std::path::Path,
+    c: &Conversation,
+    brain: &str,
+    model: &str,
+) -> Result<String, String> {
+    let new_profile = api_profile_for_brain(data_dir, brain)?;
+    let new_protocol = new_profile.as_ref().map(|p| p.protocol.as_str());
+    let effective_model = new_profile.as_ref()
+        .filter(|_| model.trim().is_empty())
+        .map(|p| p.default_model.as_str())
+        .unwrap_or(model);
+    let old_profile = if c.brain == brain {
+        None
+    } else {
+        api_profile_for_brain(data_dir, &c.brain).ok().flatten()
+    };
+    let old_protocol = if c.brain == brain {
+        new_protocol
+    } else {
+        old_profile.as_ref().map(|p| p.protocol.as_str())
+    };
+    Ok(api_reasoning::after_model_switch(
+        &c.brain, brain, old_protocol, new_protocol, effective_model, &c.effort,
+    ))
 }
 
 /// 跨厂商切换的会话字段改写：brain+model 一起换。换厂商时清空 session_ref——
 /// 旧厂商的 session 另一家恢复不了，留着只会让失败路径拿旧 ref 去 resume 新厂商；
 /// 调用方随后必须走 rebuild_session 以历史摘要重建续跑（begin_rebuild 本就不要求已有 session）。
-/// effort 保留；codex 不支持逐命令确认，ask/auto 档按启动器同规则落到 full
+/// CLI 间 effort 保留；API 思考等级在调用处按协议/模型原子归一化。
+/// codex 不支持逐命令确认，ask/auto 档按启动器同规则落到 full
 ///（claude/grok 都有逐命令批准，互切时 perm 原样保留）。
 ///
 /// ★ `is_ssh` 例外：远程连接下**绝不能**把 ask/auto 改写成 full。那里 codex 虽然仍没有本地逐命令闸，
@@ -4744,28 +4803,22 @@ fn set_conversation_brain_model(
     model: String,
 ) -> Result<Option<Conversation>, String> {
     validate_executor(&state.data_dir, &brain, &model)?;
-    if let Some(c) = state.convos.get(&conv_id) {
+    state.convos.mutate_checked(&conv_id, now_secs(), |c| {
         if c.status == "running" {
             return Err("上一轮还在进行中，请稍候".into());
         }
-    }
-    // ssh 对话切厂商时不许把 ask/auto 改写成 full（见 apply_brain_switch）——
-    // 前端切完会立刻 rebuild_session 自动重跑，静默升档等于一次点击就无确认地动了真机。
-    let is_ssh = state
-        .convos
-        .get(&conv_id)
-        .map(|c| {
-            c.task_type == "workspace"
+        // ssh 对话切厂商时不许把 ask/auto 改写成 full（见 apply_brain_switch）。
+        let is_ssh = c.task_type == "workspace"
                 || c.task_type == "skill"
                 || state
                     .conns
                     .get(&c.conn_id)
                     .map(|x| x.kind == "ssh")
-                    .unwrap_or(false)
-        })
-        .unwrap_or(false);
-    state.convos.mutate(&conv_id, now_secs(), move |c| {
-        apply_brain_switch(c, &brain, &model, is_ssh)
+                    .unwrap_or(false);
+        let effort = conversation_effort_after_switch(&state.data_dir, c, &brain, &model)?;
+        apply_brain_switch(c, &brain, &model, is_ssh);
+        c.effort = effort;
+        Ok(())
     })
 }
 
@@ -4778,9 +4831,14 @@ fn set_conversation_effort(
     conv_id: String,
     effort: String,
 ) -> Result<Option<convo::Conversation>, String> {
-    state
-        .convos
-        .mutate(&conv_id, now_secs(), move |c| c.effort = effort)
+    state.convos.mutate_checked(&conv_id, now_secs(), |c| {
+        if let Some(profile) = api_profile_for_brain(&state.data_dir, &c.brain)? {
+            let model = if c.model.trim().is_empty() { &profile.default_model } else { &c.model };
+            api_reasoning::validate(&profile.protocol, model, &effort)?;
+        }
+        c.effort = effort;
+        Ok(())
+    })
 }
 
 /// Claude CLI 的可升级情况。**只读**：查 npm registry 的已发布版本，不碰本机安装。
