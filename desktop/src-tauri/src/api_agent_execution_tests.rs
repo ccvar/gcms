@@ -60,6 +60,7 @@ async fn run(responses: Vec<(u16, String)>, root: &Path) -> Run {
         scope: "test".into(),
         protocol: p.protocol.clone(),
         system: "test instructions".into(),
+        thinking_prefix: String::new(),
         items: vec![json!({"role":"user","content":"write a file"})],
         interrupted: false,
     };
@@ -157,7 +158,12 @@ async fn output_recovery_retains_checkpoint_without_replaying_completed_write() 
         .unwrap()
         .contains("discarded"));
     assert_eq!(run.requests.len(), 3);
-    assert_eq!(run.requests[1].1["messages"], run.requests[2].1["messages"]);
+    let before = run.requests[1].1["messages"].as_array().unwrap();
+    let after = run.requests[2].1["messages"].as_array().unwrap();
+    assert_eq!(before, &after[..before.len()]);
+    assert_eq!(after.len(), before.len() + 1);
+    assert_eq!(run.requests[1].1["system"], run.requests[2].1["system"]);
+    assert_eq!(run.requests[1].1["tools"], run.requests[2].1["tools"]);
     assert!(run.requests[2].1["messages"]
         .to_string()
         .contains("tool_result"));
@@ -195,10 +201,15 @@ async fn output_recovery_is_bounded_and_never_executes_capped_calls() {
     assert!(run.result.error.contains("无需重建会话"));
     assert!(!dir.path().join("created.txt").exists());
     assert!(run.result.tools.is_empty());
-    assert_eq!(run.history.items.len(), 1);
+    assert_eq!(run.history.items.len(), 2); // original user + durable recovery hint
     assert!(!run.history.interrupted);
     assert_eq!(run.requests.len(), 2);
     assert_eq!(run.result.usage.unwrap().output, 40);
+    assert!(run.result.text.is_empty());
+    assert!(run
+        .events
+        .iter()
+        .any(|e| e["activity_id"] == "api-output-recovery" && e["status"] == "failed"));
 }
 
 #[tokio::test]

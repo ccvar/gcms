@@ -7,6 +7,12 @@
 - **打包**：推 `pilot-v*` tag → `.github/workflows/pilot-release.yml` 分别构建 macOS arm64 和 Windows x64；macOS 产出 `.dmg` 与签名更新包，Windows 产出签名 NSIS 安装器。两个平台完成后合并 `latest.json`，发布到 `ccvar/gcms-pilot-releases`。
 - **升级**：app 里「连接与模型 → 关于 → 检查更新」调用 Tauri updater，拉 `.../releases/latest/download/latest.json`，比版本 → ed25519 验签 → 下载安装 → 重启。公钥已内置在 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
 
+## 0.2.62（2026-10-20）
+
+- 修复 Claude API 旧会话续聊及截断恢复时的 `Invalid signature in thinking block`：恢复提示追加为新消息，不再修改思考签名绑定的系统说明。
+- 保存有效系统说明与工具定义的指纹。旧会话升级或定义变化时仅一次性移除失效的思考块，保留正文、工具调用与结果；未变化的会话完整保留思考签名，不重复执行已完成操作。
+- 再次触及输出上限时清理半截文本并结束恢复状态。新增严格签名绑定回归测试及独立、显式启用的官方 API 实测；发版前已验证真实 Opus 5.5 续聊、同款 400 负对照及迁移后的恢复。
+
 ## 0.2.61（2026-10-20）
 
 - API 模型支持按协议与模型选择思考等级；新对话、现有会话、定时任务及托管共用设置，旧的隐藏档位保持服务商默认，不自动启用。

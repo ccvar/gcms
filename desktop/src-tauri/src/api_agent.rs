@@ -30,9 +30,53 @@ struct History {
     scope: String,
     protocol: String,
     system: String,
+    /// Fingerprint of the effective system + tool schema used for Claude's
+    /// retained reasoning. Legacy histories did not record this prefix.
+    #[serde(default)]
+    thinking_prefix: String,
     items: Vec<Value>,
     /// Set before side effects; cleared atomically with all recorded tool results.
     interrupted: bool,
+}
+
+impl History {
+    fn prepare_thinking_prefix(&mut self, system: &str, definitions: &[Value]) -> usize {
+        if self.protocol != "anthropic_messages" {
+            return 0;
+        }
+        let prefix = format!(
+            "{:x}",
+            Sha256::digest(json!([system, definitions]).to_string().as_bytes())
+        );
+        if self.thinking_prefix == prefix {
+            return 0;
+        }
+        // A changed prefix invalidates every later reasoning block. Old
+        // versions never saved the effective prompt, so migrate them once too.
+        // Preserve all user text, tool calls and results; never replay a tool.
+        let mut removed = 0;
+        self.items.retain_mut(|item| {
+            if item["role"] != "assistant" {
+                return true;
+            }
+            let Some(blocks) = item["content"].as_array_mut() else {
+                return true;
+            };
+            let before = blocks.len();
+            blocks.retain(|block| {
+                !matches!(
+                    block["type"].as_str(),
+                    Some("thinking" | "redacted_thinking")
+                )
+            });
+            removed += before - blocks.len();
+            // Do not send an empty assistant turn after removing thinking-only
+            // output. Later reasoning was removed as well, avoiding a gap.
+            before == blocks.len() || !blocks.is_empty()
+        });
+        self.thinking_prefix = prefix;
+        removed
+    }
 }
 
 struct SessionGuard(String);
@@ -276,6 +320,7 @@ async fn execute(
             scope,
             protocol: profile.protocol.clone(),
             system: system.unwrap_or_default(),
+            thinking_prefix: String::new(),
             items: vec![],
             interrupted: false,
         }
@@ -314,22 +359,35 @@ async fn execute_model_loop(
     result: &mut TurnResult,
 ) -> Result<(), String> {
     let instructions = format!("{}\n\n{}", history.system, tools.instructions());
+    let definitions = tools.definitions();
+    let removed_thinking = history.prepare_thinking_prefix(&instructions, &definitions);
+    // Commit the migration before any request. A failed request or restart must
+    // never resurrect the old, invalid blocks or change the already-sent prefix.
+    save_history(path, history)?;
+    if removed_thinking > 0 {
+        let _ = channel.send(TurnEvent::Activity {
+            activity_id: "api-thinking-migration".into(),
+            label: "已兼容旧会话的思考历史".into(),
+            detail: "运行说明已更新，已移除旧思考签名；正文、工具调用和执行结果完整保留".into(),
+            error: String::new(),
+            status: "completed".into(),
+            kind: "reasoning".into(),
+            phase: "继续原会话".into(),
+            current: None,
+            total: None,
+        });
+    }
     let client = api_profiles::http_client()?;
     let mut recovered = false;
     let mut retry_pending = false;
     for _ in 0..MAX_ROUNDS {
-        let instructions = if recovered {
-            format!("{instructions}\n本轮曾有模型回复因输出上限被截断，该回复中的工具调用均未执行、未写入历史。请根据现有完整工具结果继续下一步，不要重做已经完成的操作。保持回复简短，一次只生成一个较小文件或一个步骤，避免在单次工具参数中放入整个项目。")
-        } else {
-            instructions.clone()
-        };
         let body = request_body(
             profile,
             model,
             effort,
             &instructions,
             &history.items,
-            &tools.definitions(),
+            &definitions,
         )?;
         if body.to_string().len() > MAX_HISTORY_BYTES {
             return Err("上下文已达到安全上限，请新建会话；未自动丢弃历史".into());
@@ -348,15 +406,31 @@ async fn execute_model_loop(
             // even complete-looking calls preceding a clipped JSON block.
             // Keep its billed usage, but neither its text nor arguments enter
             // model history. The next request includes all prior tool results.
-            if recovered {
-                return Err(format!("Claude 单次输出达到 {} token 上限（max_tokens），自动恢复一次后仍未完成。已保存此前完整工具结果；可在设置 → API 服务 → 高级设置提高单次最大输出 token，或要求分文件、分步骤生成后继续，无需重建会话。", profile.max_output_tokens));
-            }
-            recovered = true;
-            retry_pending = true;
             result.text.truncate(text_checkpoint);
             let _ = channel.send(TurnEvent::TextReset {
                 text: result.text.clone(),
             });
+            if recovered {
+                let error = format!("Claude 单次输出达到 {} token 上限（max_tokens），自动恢复一次后仍未完成。已保存此前完整工具结果；可在设置 → API 服务 → 高级设置提高单次最大输出 token，或要求分文件、分步骤生成后继续，无需重建会话。", profile.max_output_tokens);
+                let _ = channel.send(TurnEvent::Activity {
+                    activity_id: "api-output-recovery".into(),
+                    label: "输出恢复未完成".into(),
+                    detail: "已保留此前完整工具结果".into(),
+                    error: error.clone(),
+                    status: "failed".into(),
+                    kind: "reasoning".into(),
+                    phase: String::new(),
+                    current: None,
+                    total: None,
+                });
+                return Err(error);
+            }
+            recovered = true;
+            retry_pending = true;
+            // Append the recovery hint instead of editing system: Claude binds
+            // signatures to the entire preceding prefix, including system.
+            history.items.push(json!({"role":"user", "content":"Pilot 输出恢复提示：本轮有回复因输出上限被截断，该回复中的工具调用均未执行、未写入历史。请根据现有完整工具结果继续下一步，不要重做已经完成的操作。保持回复简短，一次只生成一个较小文件或一个步骤，避免在单次工具参数中放入整个项目。"}));
+            save_history(path, history)?;
             let _ = channel.send(TurnEvent::Activity {
                 activity_id: "api-output-recovery".into(),
                 label: "输出达到上限，正在恢复".into(),
@@ -998,6 +1072,14 @@ async fn stream_request(
 mod execution_tests;
 
 #[cfg(test)]
+#[path = "api_agent_binding_tests.rs"]
+mod binding_tests;
+
+#[cfg(test)]
+#[path = "api_agent_binding_live_tests.rs"]
+mod binding_live_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1161,6 +1243,7 @@ mod tests {
             scope: "scope".into(),
             protocol: "openai_responses".into(),
             system: String::new(),
+            thinking_prefix: String::new(),
             items: vec![],
             interrupted: true,
         };
@@ -1178,6 +1261,7 @@ mod tests {
             scope: "x".into(),
             protocol: "openai_responses".into(),
             system: "".into(),
+            thinking_prefix: String::new(),
             items: vec![json!({"role":"user","content":"keep"})],
             interrupted: false,
         };
