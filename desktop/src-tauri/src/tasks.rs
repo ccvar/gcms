@@ -75,6 +75,10 @@ pub struct TaskRunSite {
     pub ok: bool,
     #[serde(default)]
     pub conv_id: String,
+    /// All execution attempts, including a failed primary before fallback. The
+    /// final conversation remains conv_id; accounting deduplicates these IDs.
+    #[serde(default)]
+    pub attempt_conv_ids: Vec<String>,
     #[serde(default)]
     pub error: String,
     /// 该站因订阅限额被顺延/中断（非失败语义）。

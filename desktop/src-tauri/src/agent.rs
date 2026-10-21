@@ -1923,6 +1923,7 @@ pub async fn run_turn(
     message: String,
     turn_id: String,
     channel: Channel<TurnEvent>,
+    api_execution_policy: crate::api_execution::ApiExecutionPolicy,
 ) -> TurnResult {
     // 用户消息仍按原文写入 conversations.json；这里只增强发给执行器的临时副本。
     // 每轮注入才能覆盖升级前已经建立的 Claude/Codex session。
@@ -2039,6 +2040,7 @@ pub async fn run_turn(
             registry, conn, work_dir, profile_id.to_string(), model, effort, mode,
             selected_skill_ids, data_dir, lease.as_ref(), session_ref, is_first,
             system, message, turn_id, channel, api_key,
+            api_execution_policy,
         ).await;
     }
     if !matches!(brain.as_str(), "claude" | "codex" | "grok") {

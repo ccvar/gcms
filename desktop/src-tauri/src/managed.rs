@@ -1189,6 +1189,7 @@ pub fn budget_exceeded(week_tokens: u64, budget: u64) -> bool {
 }
 
 /// 本周 token 累计：条目为（运行时间戳, 该次会话累计 token），只算 week_start 之后的。
+#[cfg(test)]
 pub fn sum_week_tokens(entries: &[(u64, u64)], week_start: u64) -> u64 {
     entries
         .iter()

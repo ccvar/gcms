@@ -1,6 +1,9 @@
 mod acp;
 mod agent;
 mod api_agent;
+mod api_execution;
+#[cfg(test)]
+mod managed_api_execution_tests;
 mod api_billing;
 mod api_profiles;
 mod api_reasoning;
@@ -6608,29 +6611,170 @@ async fn managed_publish(
     Ok(())
 }
 
-/// 本周托管 token 用量：配套任务运行记录（ts≥周一）关联的会话 total_tokens 求和。
-/// 每次任务触发都开全新对话，所以单个会话的累计＝那次运行的用量，不会重复计。
+/// 本周托管 token 用量：只累计关联会话一次，同时计入失败主模型的尝试。
+/// 同一会话可能被旧重试/运行记录重复引用，不能按 history 行重复求和。
 fn managed_week_tokens(
     tstore: &tasks::TaskStore,
     convos: &convo::ConvStore,
     m: &managed::ManagedSite,
     week_start: u64,
 ) -> u64 {
-    let mut entries: Vec<(u64, u64)> = Vec::new();
+    managed_week_tokens_with_pending(tstore, convos, m, week_start, &[])
+}
+
+fn managed_week_tokens_with_pending(
+    tstore: &tasks::TaskStore,
+    convos: &convo::ConvStore,
+    m: &managed::ManagedSite,
+    week_start: u64,
+    pending_conv_ids: &[String],
+) -> u64 {
+    let mut ids = HashSet::new();
     for tid in &m.task_ids {
         let Some(t) = tstore.get(tid) else { continue };
-        for r in &t.history {
+        for r in t.history.iter().filter(|run| run.ts >= week_start) {
             for s in &r.sites {
-                if s.conv_id.is_empty() {
-                    continue;
-                }
-                if let Some(c) = convos.get(&s.conv_id) {
-                    entries.push((r.ts, c.total_tokens));
+                for id in std::iter::once(&s.conv_id).chain(&s.attempt_conv_ids) {
+                    if !id.is_empty() { ids.insert(id.clone()); }
                 }
             }
         }
     }
-    managed::sum_week_tokens(&entries, week_start)
+    ids.extend(pending_conv_ids.iter().filter(|id| !id.is_empty()).cloned());
+    managed_conversation_tokens(convos, m, ids.iter().map(String::as_str))
+}
+
+fn managed_conversation_tokens<'a>(
+    convos: &convo::ConvStore,
+    site: &managed::ManagedSite,
+    ids: impl Iterator<Item = &'a str>,
+) -> u64 {
+    ids.collect::<HashSet<_>>().into_iter().filter_map(|id| convos.get(id))
+        .filter(|conv| conv.conn_id == site.conn_id && conv.site_slug == site.site_slug)
+        .fold(0u64, |total, conv| total.saturating_add(conv.total_tokens))
+}
+
+/// Only an actual single-site task owned by a managed record can opt into the
+/// larger API execution policy. Titles and model names are not authority.
+fn managed_owner_for_task(
+    mstore: &managed::ManagedStore,
+    task: &ScheduledTask,
+) -> Option<managed::ManagedSite> {
+    let targets = task.targets();
+    if targets.len() != 1 { return None; }
+    mstore.list().into_iter().find(|site| {
+        site.task_ids.contains(&task.id) && site.conn_id == task.conn_id
+            && site.site_slug == targets[0].0
+    })
+}
+
+fn task_has_api_executor(task: &ScheduledTask) -> bool {
+    task.brain.starts_with("api:") || task_fallback(task)
+        .is_some_and(|(brain, _, _)| brain.starts_with("api:"))
+}
+
+/// Managed API tasks sharing a site serialize across manual and scheduled runs.
+/// Weak entries do not retain every historical site forever; data directories
+/// isolate dev/test/profile stores even when managed IDs happen to be identical.
+fn managed_api_run_lock(data_dir: &std::path::Path, managed_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    type Key = (PathBuf, String);
+    type Locks = std::collections::HashMap<Key, std::sync::Weak<tokio::sync::Mutex<()>>>;
+    static LOCKS: std::sync::OnceLock<Mutex<Locks>> = std::sync::OnceLock::new();
+    let path = std::fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    let key = (path, managed_id.to_string());
+    let mut locks = LOCKS.get_or_init(|| Mutex::new(Locks::new())).lock().unwrap();
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(std::sync::Weak::upgrade) { return lock; }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
+}
+
+fn managed_api_policy_for_attempt(
+    mstore: &managed::ManagedStore,
+    tstore: &tasks::TaskStore,
+    convos: &convo::ConvStore,
+    managed_id: Option<&str>,
+    task: &ScheduledTask,
+    brain: &str,
+    pending_conv_ids: &[String],
+) -> Result<api_execution::ApiExecutionPolicy, String> {
+    if !brain.starts_with("api:") { return Ok(Default::default()); }
+    let Some(id) = managed_id else { return Ok(Default::default()); };
+    let site = managed_owner_for_task(mstore, task)
+        .filter(|site| site.id == id).ok_or("托管已移除或任务归属已变化，本次未继续请求 API")?;
+    if site.paused || site.fused_at > 0 {
+        return Err("托管已暂停或预算已熔断，本次未继续请求 API".into());
+    }
+    let remaining = (site.token_weekly_budget > 0).then(|| {
+        let used = managed_week_tokens_with_pending(tstore, convos, &site,
+            managed::week_start_local().max(0) as u64, pending_conv_ids);
+        site.token_weekly_budget.saturating_sub(used)
+    });
+    let current_attempt_tokens = managed_conversation_tokens(convos, &site,
+        pending_conv_ids.iter().map(String::as_str));
+    let mut policy = api_execution::ApiExecutionPolicy::managed(remaining);
+    // The per-run ceiling also spans a failed primary before fallback, even
+    // when the user has not configured a weekly allowance.
+    policy.max_total_tokens = policy.max_total_tokens
+        .map(|limit| limit.min(8_000_000u64.saturating_sub(current_attempt_tokens)));
+    Ok(policy)
+}
+
+fn account_managed_fallback_budget(
+    policy: &mut api_execution::ApiExecutionPolicy,
+    primary: &api_execution::ApiExecutionPolicy,
+    elapsed: Duration,
+) {
+    if policy.managed {
+        policy.max_requests = policy.max_requests.saturating_sub(primary.requests_used());
+        policy.total_timeout = policy
+            .total_timeout
+            .map(|timeout| timeout.saturating_sub(elapsed));
+    }
+}
+
+/// A missing usage association must not silently release the next paid task.
+/// Stop the managed API queue if its final history cannot be persisted.
+fn managed_api_history_error(
+    mstore: &managed::ManagedStore,
+    tstore: &tasks::TaskStore,
+    convos: &convo::ConvStore,
+    managed_id: Option<&str>,
+    saved: Result<Option<ScheduledTask>, String>,
+    paid_attempt_conv_ids: &[String],
+) -> String {
+    let Some(id) = managed_id else {
+        return String::new();
+    };
+    let cause = match saved {
+        Ok(Some(_)) => {
+            let incomplete = paid_attempt_conv_ids
+                .iter()
+                .find(|id| convos.get(id).is_none_or(|conv| conv.status != "idle"));
+            match incomplete {
+                Some(id) => format!("付费 API 尝试的会话/用量未完整保存：{id}"),
+                None => return String::new(),
+            }
+        }
+        Ok(None) => "任务记录不存在".to_string(),
+        Err(error) => error,
+    };
+    let now = now_secs();
+    let message = format!("托管执行已结束，但运行记录保存失败；已停止后续托管 API 任务，修复记录后再恢复：{cause}");
+    match mstore.mutate(id, now, |site| {
+        site.paused = true;
+        site.fused_at = now;
+    }) {
+        Ok(Some(site)) => {
+            for tid in &site.task_ids {
+                let _ = tstore.mutate(tid, |task| task.enabled = false);
+            }
+            message
+        }
+        Ok(None) => message,
+        Err(error) => format!("暂停状态保存也失败，请立即关闭 Pilot 并检查磁盘：{error}；{message}"),
+    }
 }
 
 /// 周报数字卡：本周发布数 / 草稿数 / token 用量 / 配套任务近况。
@@ -7195,6 +7339,14 @@ fn task_fallback(task: &ScheduledTask) -> Option<(String, String, String)> {
 }
 
 fn retryable_executor_error(text: &str) -> bool {
+    // An execution safety stop is never model unavailability. In particular,
+    // do not reset a turn/token/time ceiling by starting a fallback conversation.
+    if ["托管请求次数上限", "托管累计 token 预算", "托管执行时长上限", "托管连续无进展",
+        "托管工具连续失败", "托管已阻止重复操作", "托管操作结果未确认",
+        "服务商未返回用量", "托管已暂停或预算已熔断"]
+        .iter().any(|prefix| text.contains(prefix)) {
+        return false;
+    }
     if agent::detect_usage_limit(text).is_some() {
         return true;
     }
@@ -7270,10 +7422,39 @@ fn scheduled_task_perm_mode(managed_sites: &[managed::ManagedSite], task_id: &st
 
 /// 单站执行结果（多站任务撞限止损用）。
 enum SiteRun {
-    Done(Box<Conversation>, String, bool),
-    Failed(String, String, bool),
+    Done(Box<Conversation>, String, bool, Vec<String>, Vec<String>),
+    Failed(String, String, bool, Vec<String>, Vec<String>),
     /// 同一轮里前面的站撞了限额：这站直接顺延，不再白跑。
     LimitSkipped,
+}
+
+fn refresh_managed_api_task(
+    tstore: &tasks::TaskStore,
+    mstore: &managed::ManagedStore,
+    task_id: &str,
+    managed_id: &str,
+) -> Result<ScheduledTask, String> {
+    let task = tstore.get(task_id).ok_or("托管任务已删除，本次未运行")?;
+    let site = managed_owner_for_task(mstore, &task)
+        .filter(|site| site.id == managed_id).ok_or("托管已移除或任务归属已变化，本次未运行")?;
+    if site.paused || site.fused_at > 0 || !task.enabled {
+        return Err("托管或任务已暂停，或预算已熔断，本次未运行".into());
+    }
+    Ok(task)
+}
+
+fn record_managed_task_skip(tstore: &tasks::TaskStore, task_id: &str, reason: &str) {
+    let now = now_secs();
+    let _ = tstore.mutate(task_id, |task| {
+        task.last_run = now;
+        task.runs += 1;
+        task.last_status = "ok".into();
+        task.last_summary = reason.to_string();
+        task.history.insert(0, tasks::TaskRun {
+            ts: now, ok: true, summary: reason.to_string(), sites: vec![], deferred: false,
+        });
+        task.history.truncate(20);
+    });
 }
 
 /// 触发一次任务：对每个目标站点各开一个全新对话跑 task.prompt（顺序执行，互不阻断），
@@ -7293,6 +7474,25 @@ async fn fire_task(
     data_dir: PathBuf,
     ssh: ssh::SshSessions,
 ) {
+    let managed_api_id = if task_has_api_executor(&task) {
+        managed_owner_for_task(&mstore, &task).map(|site| site.id)
+    } else { None };
+    // This guard spans prefire, the entire native API tool loop, history writes
+    // and final content verification. A queued task recomputes its budget after
+    // the preceding task's usage has been persisted.
+    let _managed_api_guard = match &managed_api_id {
+        Some(id) => Some(managed_api_run_lock(&data_dir, id).lock_owned().await),
+        None => None,
+    };
+    let task = if let Some(id) = &managed_api_id {
+        match refresh_managed_api_task(&tstore, &mstore, &task.id, id) {
+            Ok(current) => current,
+            Err(reason) => {
+                record_managed_task_skip(&tstore, &task.id, &reason);
+                return;
+            }
+        }
+    } else { task };
     // ① 触发前拦截：限额期内不跑、不记失败（runs 不加），next_run 顺延，历史记「顺延」条目。
     // 托管配套任务同样先走这里（在 prefire 之前），Skip 语义不变、通知有节流不会双发。
     let lstore = limits::LimitStore::new(&data_dir);
@@ -7357,24 +7557,7 @@ async fn fire_task(
         ManagedGate::Proceed(extra) => extra,
         ManagedGate::Skip(reason) => {
             // 跳过也是一次「运行」：写记录让用户在任务卡上看得到原因；next_run 已由调用方推进。
-            let now = now_secs();
-            let _ = tstore.mutate(&task.id, |x| {
-                x.last_run = now;
-                x.runs += 1;
-                x.last_status = "ok".into();
-                x.last_summary = reason.clone();
-                x.history.insert(
-                    0,
-                    tasks::TaskRun {
-                        ts: now,
-                        ok: true,
-                        summary: reason.clone(),
-                        sites: vec![],
-                        deferred: false,
-                    },
-                );
-                x.history.truncate(20);
-            });
+            record_managed_task_skip(&tstore, &task.id, &reason);
             return;
         }
     };
@@ -7411,6 +7594,10 @@ async fn fire_task(
             task_perm_mode.clone(),
         );
         let fallback = fallback.clone();
+        let policy_scope = managed_api_id.clone();
+        let policy_task = task.clone();
+        let policy_mstore = mstore.clone();
+        let policy_tstore = tstore.clone();
         let (mut brain, mut model, mut effort, mut fallback_used) = initial_executor.clone();
         handles.push(tauri::async_runtime::spawn(async move {
             let _permit = sem.acquire_owned().await;
@@ -7433,9 +7620,19 @@ async fn fire_task(
             }
 
             let conv_id = uuid::Uuid::new_v4().to_string();
+            let mut attempt_conv_ids = vec![conv_id.clone()];
+            let mut paid_attempt_conv_ids = Vec::new();
             // 后台运行没有前端接收方，用一个丢弃事件的 Channel。
             let sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
             let executor = executor_label(&brain, &model);
+            let api_execution_policy = match managed_api_policy_for_attempt(
+                &policy_mstore, &policy_tstore, &convos, policy_scope.as_deref(), &policy_task, &brain, &[],
+            ) {
+                Ok(policy) => policy,
+                Err(error) => return (slug, SiteRun::Failed(error, executor, fallback_used, vec![], vec![])),
+            };
+            let attempt_started = std::time::Instant::now();
+            let primary_policy_usage = api_execution_policy.clone();
             // 无人值守任务不能使用 ask/auto。增长扫描与复盘使用 plan 真只读，
             // 其余执行型任务保持 full。
             let res = create_conversation(
@@ -7463,10 +7660,17 @@ async fn fire_task(
                 sink,
                 data_dir.clone(),
                 ssh.clone(),
+                api_execution_policy,
             )
             .await;
+            if primary_policy_usage.managed && primary_policy_usage.requests_used() > 0 {
+                paid_attempt_conv_ids.push(attempt_conv_ids[0].clone());
+            }
 
             let should_fallback = !fallback_used
+                // A paid attempt whose final conversation could not be saved
+                // has unknown accounting, not an unavailable model to retry.
+                && !(primary_policy_usage.managed && primary_policy_usage.requests_used() > 0 && res.is_err())
                 && match &res {
                     Ok(conv) => conversation_can_fallback(conv),
                     Err(error) => retryable_executor_error(error),
@@ -7489,12 +7693,27 @@ async fn fire_task(
                         }
                     }
                     let fallback_sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
+                    let fallback_executor = executor_label(next_brain, next_model);
+                    // The primary attempt is not in task history yet, but its
+                    // usage already belongs to this site's budget.
+                    let mut fallback_policy = match managed_api_policy_for_attempt(
+                        &policy_mstore, &policy_tstore, &convos, policy_scope.as_deref(),
+                        &policy_task, next_brain, &attempt_conv_ids,
+                    ) {
+                        Ok(policy) => policy,
+                        Err(error) => return (slug, SiteRun::Failed(error, fallback_executor, true, attempt_conv_ids, paid_attempt_conv_ids)),
+                    };
+                    account_managed_fallback_budget(&mut fallback_policy,
+                        &primary_policy_usage, attempt_started.elapsed());
+                    let fallback_conv_id = uuid::Uuid::new_v4().to_string();
+                    attempt_conv_ids.push(fallback_conv_id.clone());
+                    let fallback_policy_usage = fallback_policy.clone();
                     let fallback_res = create_conversation(
                         conns,
                         convos,
                         runs,
                         pack_updating,
-                        uuid::Uuid::new_v4().to_string(),
+                        fallback_conv_id,
                         conn_id,
                         slug.clone(),
                         name,
@@ -7512,9 +7731,12 @@ async fn fire_task(
                         fallback_sink,
                         data_dir,
                         ssh,
+                        fallback_policy,
                     )
                     .await;
-                    let fallback_executor = executor_label(next_brain, next_model);
+                    if fallback_policy_usage.managed && fallback_policy_usage.requests_used() > 0 {
+                        paid_attempt_conv_ids.push(attempt_conv_ids.last().unwrap().clone());
+                    }
                     return match fallback_res {
                         Ok(conv) => {
                             if let Some(reset) = conv
@@ -7527,7 +7749,7 @@ async fn fire_task(
                                 let effective = lstore2.register(next_brain, reset, now_secs());
                                 *limit_flag.lock().unwrap() = Some(effective);
                             }
-                            (slug, SiteRun::Done(Box::new(conv), fallback_executor, true))
+                            (slug, SiteRun::Done(Box::new(conv), fallback_executor, true, attempt_conv_ids, paid_attempt_conv_ids))
                         }
                         Err(error) => (
                             slug,
@@ -7535,6 +7757,8 @@ async fn fire_task(
                                 format!("主模型不可用，备用模型执行失败：{error}"),
                                 fallback_executor,
                                 true,
+                                attempt_conv_ids,
+                                paid_attempt_conv_ids,
                             ),
                         ),
                     };
@@ -7554,9 +7778,9 @@ async fn fire_task(
                         let eff = lstore2.register(&brain, reset, now_secs());
                         *limit_flag.lock().unwrap() = Some(eff);
                     }
-                    (slug, SiteRun::Done(Box::new(c), executor, fallback_used))
+                    (slug, SiteRun::Done(Box::new(c), executor, fallback_used, attempt_conv_ids, paid_attempt_conv_ids))
                 }
-                Err(e) => (slug, SiteRun::Failed(e, executor, fallback_used)),
+                Err(e) => (slug, SiteRun::Failed(e, executor, fallback_used, attempt_conv_ids, paid_attempt_conv_ids)),
             }
         }));
     }
@@ -7568,12 +7792,14 @@ async fn fire_task(
     let mut last_assistant_full = String::new();
     let mut run_sites: Vec<tasks::TaskRunSite> = Vec::with_capacity(targets.len());
     let mut fallback_count = 0usize;
+    let mut paid_attempts = Vec::new();
     for h in handles {
         let Ok((slug, outcome)) = h.await else {
             continue;
         };
         match outcome {
-            SiteRun::Done(c, executor, fallback_used) => {
+            SiteRun::Done(c, executor, fallback_used, attempt_conv_ids, paid_ids) => {
+                paid_attempts.extend(paid_ids);
                 if fallback_used {
                     fallback_count += 1;
                 }
@@ -7589,6 +7815,7 @@ async fn fire_task(
                         slug,
                         ok: false,
                         conv_id: c.id.clone(),
+                        attempt_conv_ids,
                         error: "撞到订阅限额".into(),
                         deferred: true,
                         executor,
@@ -7603,6 +7830,7 @@ async fn fire_task(
                         slug,
                         ok: false,
                         conv_id: c.id.clone(),
+                        attempt_conv_ids,
                         error,
                         deferred: false,
                         executor,
@@ -7623,6 +7851,7 @@ async fn fire_task(
                         slug,
                         ok: true,
                         conv_id: c.id.clone(),
+                        attempt_conv_ids,
                         error: String::new(),
                         deferred: false,
                         executor,
@@ -7630,7 +7859,8 @@ async fn fire_task(
                     });
                 }
             }
-            SiteRun::Failed(e, executor, fallback_used) => {
+            SiteRun::Failed(e, executor, fallback_used, attempt_conv_ids, paid_ids) => {
+                paid_attempts.extend(paid_ids);
                 if fallback_used {
                     fallback_count += 1;
                 }
@@ -7642,6 +7872,7 @@ async fn fire_task(
                     slug,
                     ok: false,
                     conv_id: String::new(),
+                    attempt_conv_ids,
                     error: brief,
                     deferred: false,
                     executor,
@@ -7653,6 +7884,7 @@ async fn fire_task(
                     slug,
                     ok: false,
                     conv_id: String::new(),
+                    attempt_conv_ids: vec![],
                     error: "限额顺延，本轮未运行".into(),
                     deferred: true,
                     executor: String::new(),
@@ -7691,7 +7923,7 @@ async fn fire_task(
     if deferred && !first_err.is_empty() {
         summary.push_str(&format!("；{first_err}"));
     }
-    let _ = tstore.mutate(&task.id, |x| {
+    let history_saved = tstore.mutate(&task.id, |x| {
         x.last_run = now;
         x.runs += 1;
         // 顺延＝非失败语义：限额不算这个任务「坏了」。
@@ -7722,7 +7954,24 @@ async fn fire_task(
         );
         x.history.truncate(20);
     });
-    let mut managed_sync_error = String::new();
+    let mut managed_sync_error = managed_api_history_error(
+        &mstore,
+        &tstore,
+        &convos,
+        managed_api_id.as_deref(),
+        history_saved,
+        &paid_attempts,
+    );
+    if !managed_sync_error.is_empty() {
+        let _ = tstore.mutate(&task.id, |stored| {
+            stored.last_status = "error".into();
+            stored.last_summary = managed_sync_error.clone();
+            if let Some(history) = stored.history.first_mut().filter(|run| run.ts == now) {
+                history.ok = false;
+                history.summary = managed_sync_error.clone();
+            }
+        });
+    }
     // 增长每日任务的机会状态闭环：对话成功不等于 GCMS 已落盘，必须回读真实内容。
     // 草稿进入待审，已发布内容进入观察；回读异常保留 Drafting 现场，防止重复写入。
     if let Some(m) = mstore
@@ -7825,7 +8074,12 @@ async fn fire_task(
                 }
             });
             if let Err(error) = sync_result {
-                managed_sync_error = format!("AI 执行已结束，但增长托管状态同步失败：{error}");
+                let sync_error = format!("AI 执行已结束，但增长托管状态同步失败：{error}");
+                if managed_sync_error.is_empty() {
+                    managed_sync_error = sync_error;
+                } else {
+                    managed_sync_error.push_str(&format!("；{sync_error}"));
+                }
                 let _ = tstore.mutate(&task.id, |stored| {
                     stored.last_status = "error".into();
                     stored.last_summary = managed_sync_error.clone();
@@ -7878,7 +8132,7 @@ async fn fire_task(
         }
     }
     // ② 撞限收尾：不发常规完成/失败通知——发一次性的「已顺延」通知（每 brain 每窗口一次）。
-    if let Some(reset) = limit_hit {
+    if let Some(reset) = limit_hit.filter(|_| managed_sync_error.is_empty()) {
         if lstore.claim_notify(&task.brain, now) {
             notify_user(
                 &app,
@@ -7904,7 +8158,7 @@ async fn fire_task(
         format!(
             "{} · {}",
             task.title,
-            managed_sync_error.chars().take(80).collect::<String>()
+            managed_sync_error
         )
     } else {
         format!(
@@ -8105,6 +8359,7 @@ async fn create_conversation(
     on_event: Channel<agent::TurnEvent>,
     data_dir: PathBuf,
     ssh: ssh::SshSessions,
+    api_execution_policy: api_execution::ApiExecutionPolicy,
 ) -> Result<Conversation, String> {
     validate_executor(&data_dir, &brain, &model)?;
     let now = now_secs();
@@ -8241,6 +8496,7 @@ async fn create_conversation(
         message.trim().to_string(),
         conv_id.clone(),
         on_event,
+        api_execution_policy,
     )
     .await;
 
@@ -8500,6 +8756,7 @@ async fn start_conversation(
         on_event,
         state.data_dir.clone(),
         state.ssh.clone(),
+        Default::default(),
     )
     .await;
     if deadline.as_ref().is_some_and(|guard| guard.expired()) {
@@ -8596,6 +8853,7 @@ async fn send_message(
         message.trim().to_string(),
         conv_id.clone(),
         on_event,
+        Default::default(),
     )
     .await;
 
@@ -8642,6 +8900,7 @@ async fn retry_turn(
         message,
         conv_id.clone(),
         on_event,
+        Default::default(),
     )
     .await;
 
@@ -8762,6 +9021,7 @@ async fn run_fresh_turn(
         message,
         conv_id.clone(),
         on_event,
+        Default::default(),
     )
     .await;
 

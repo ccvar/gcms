@@ -7,6 +7,13 @@
 - **打包**：推 `pilot-v*` tag → `.github/workflows/pilot-release.yml` 分别构建 macOS arm64 和 Windows x64；macOS 产出 `.dmg` 与签名更新包，Windows 产出签名 NSIS 安装器。两个平台完成后合并 `latest.json`，发布到 `ccvar/gcms-pilot-releases`。
 - **升级**：app 里「连接与模型 → 关于 → 检查更新」调用 Tauri updater，拉 `.../releases/latest/download/latest.json`，比版本 → ed25519 验签 → 下载安装 → 重启。公钥已内置在 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
 
+## 0.2.64（2026-10-21）
+
+- API 托管任务超过 32 次模型请求后沿原会话继续，保留已完成工具结果，不重发最初任务；最多 96 次请求、45 分钟、800 万累计 token，并受本周剩余预算约束。普通 API 对话与 CLI 执行行为不变。
+- 增加重复操作、连续无进展、写入结果不确定及缺失用量保护；主备 API 尝试共享请求、时间和 token 预算，同站点的 API 托管任务排队执行。
+- 用量统计去重并计入失败主模型；付费尝试的会话用量或任务记录保存失败时报告错误并尝试暂停托管。旧的失败任务不会因升级自动重跑。
+- 本地模拟 67 次连续请求及异常恢复回归通过；API 113 项、托管 102 项测试通过（两组有重叠），Rust 与 Svelte 检查通过；未重跑线上托管任务。
+
 ## 0.2.63（2026-10-20）
 
 - 托管卡片的模式标签支持下拉切换「计划托管 ↔ 增长托管」，单站编辑与批量设置同步支持；切换前二次确认，取消或保存失败不提前改变界面状态。

@@ -770,6 +770,7 @@ async fn execute_task(app: AppHandle, binding: ConsoleBinding, task: RemoteTask,
         channel,
         state.data_dir.clone(),
         state.ssh.clone(),
+        Default::default(),
     )
     .await;
     renewal_stop.notify_waiters();
